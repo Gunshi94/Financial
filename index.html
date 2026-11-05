@@ -28,6 +28,8 @@
   @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
     --paper:#12171C; --ink:#ECE7DA; --ink-soft:#9D978B; --green:#4C8F68; --green-soft:#1E3A2A; --gold:#C79A2B; --gold-soft:#3A3220;
     --red:#C15A42; --red-soft:#3A241F; --slate:#52708A; --rule:#39424B; --surface:#1C232A; --ink-bg:#0D1216; --border:#39424B; --track:#2A323A; } }
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .tag.m{background:var(--tdb); color:var(--tdf);} }
+  :root[data-theme="dark"] .tag.m{background:var(--tdb); color:var(--tdf);}
   :root[data-theme="dark"]{
     --paper:#12171C; --ink:#ECE7DA; --ink-soft:#9D978B; --green:#4C8F68; --green-soft:#1E3A2A; --gold:#C79A2B; --gold-soft:#3A3220;
     --red:#C15A42; --red-soft:#3A241F; --slate:#52708A; --rule:#39424B; --surface:#1C232A; --ink-bg:#0D1216; --border:#39424B; --track:#2A323A; }
@@ -78,7 +80,16 @@
   .chips{display:flex; gap:6px; flex-wrap:wrap; margin-top:4px;}
   .chips button{flex:1 1 auto; min-width:60px; height:38px; border-radius:9px; border:1.5px solid var(--rule); background:var(--surface); font-size:.78rem; font-weight:600; color:var(--ink-soft);}
   .chips button.on{background:var(--ink-bg); border-color:var(--ink-bg); color:var(--on-dark);}
-  .chips button.on.cc{background:var(--gold); border-color:var(--gold);}
+  .chips button.mchip{display:inline-flex; align-items:center; justify-content:center; gap:6px;}
+  .chips button.mchip .dot{width:9px; height:9px; border-radius:50%; background:var(--mc); flex:none;}
+  .chips button.mchip.on{background:var(--mc); border-color:var(--mc); color:var(--mon);}
+  .chips button.mchip.on .dot{display:none;}
+  .tag.m{background:var(--tlb); color:var(--tlf);}
+  .cdot{display:inline-block; flex:none; width:12px; height:12px; border-radius:50%; margin-right:8px; vertical-align:-1px;}
+  .swatches{display:flex; flex-wrap:wrap; gap:8px; margin-top:6px;}
+  .swatches button{width:30px; height:30px; border-radius:50%; border:2px solid var(--surface); box-shadow:0 0 0 1.5px var(--rule); padding:0;}
+  .swatches button.on{box-shadow:0 0 0 2.5px var(--ink);}
+  .pmrow{border:1.5px dashed var(--rule); border-radius:12px; padding:10px; margin-bottom:10px;}
   .check-line{display:flex; align-items:center; gap:10px; font-size:.86rem; margin-top:10px;}
   .check-line input{width:20px; height:20px; accent-color:var(--green); margin:0; flex:none;}
   .empty{text-align:center; color:var(--ink-soft); font-size:.85rem; padding:12px 8px; font-style:italic;}
@@ -341,6 +352,12 @@
           <div class="warnline" id="splitWarn"></div>
         </div>
         <div class="card">
+          <h2 style="margin-bottom:4px;">Ways you pay</h2>
+          <p class="hint" style="margin:0 0 10px;">Your wallets and bank accounts for "Paid with". Credit cards are set up on the Cards tab. Cash is always there.</p>
+          <div id="acctEdit"></div>
+          <button class="btn ghost block" data-action="addAcct">+ Add a wallet or bank</button>
+        </div>
+        <div class="card">
           <h2 style="margin-bottom:10px;">Pay schedule</h2>
           <div class="chips" id="payTypeChips"><button data-paytype="every">Every few days</button><button data-paytype="twice">Twice a month</button><button data-paytype="monthly">Once a month</button></div>
           <div class="row2" id="payEvery" style="margin-top:12px;">
@@ -417,7 +434,8 @@ function defaults(){
     savings:{ balance:0, log:[] },          // log: {id,date,amount,note,opening,ref}
     goals:[],       // {id,name,target,accounts:[{id,name,amount}]}
     goalLog:[],     // {id,date,goalId,acctId,amount,note}
-    stmtChecks:{}   // 'cardId|close' -> bank's statement balance
+    stmtChecks:{},  // 'cardId|close' -> bank's statement balance
+    accounts:DEFAULT_ACCOUNTS.map(x => ({...x, colorPicked:false}))   // your wallets and banks for "Paid with" (Cash is always available)
   };
 }
 function normalize(s){
@@ -434,12 +452,20 @@ function normalize(s){
   o.paydays = {}; Object.entries((s&&s.paydays)||{}).forEach(([k,v]) => { if(isoOk(k)&&v) o.paydays[k] = {income:r2(num(v.income))}; });
   o.cards = ((s&&s.cards)||[]).filter(Boolean).map(c => ({ id:String(c.id||uid()), name:String(c.name||'Card').trim()||'Card',
     close:Math.min(28,Math.max(1,Math.round(num(c.close))||15)), due:Math.min(60,Math.max(1,Math.round(num(c.due))||19)),
-    start:r2(num(c.start)), payNeed:!!c.payNeed }));
+    start:r2(num(c.start)), payNeed:!!c.payNeed, color:okColor(c.color) || brandColor(c.name, 1), colorPicked:!!c.colorPicked }));
   const cardIds = new Set(o.cards.map(c=>c.id));
+  // wallets and banks: start with GCash, Maya and Bank the first time
+  const rawAcc = (s && Array.isArray(s.accounts)) ? s.accounts : DEFAULT_ACCOUNTS;
+  o.accounts = rawAcc.filter(Boolean).map((a,i) => ({ id:String(a.id||uid()), name:String(a.name||'Account').trim()||'Account', color:okColor(a.color) || brandColor(a.name, i), colorPicked:!!a.colorPicked }));
+  const accIds = new Set(o.accounts.map(a=>a.id));
+  const needAcc = (id, name, color) => { if(!accIds.has(id)){ o.accounts.push({id, name, color, colorPicked:false}); accIds.add(id); } };
   o.cardPays = ((s&&s.cardPays)||[]).filter(p=>p&&isoOk(p.date)&&cardIds.has(String(p.cardId))).map(p=>({id:String(p.id||uid()), cardId:String(p.cardId), date:p.date, amount:r2(num(p.amount)), fromSavings:!!p.fromSavings, note:String(p.note||'')}));
   o.expenses = ((s&&s.expenses)||[]).filter(e=>e&&isoOk(e.date)).map(e => {
-    let m = String(e.method||'cash'); if(!['cash','debit','gcash'].includes(m) && !(m.startsWith('card:') && cardIds.has(m.slice(5)))) m = 'cash';
-    const card = m.startsWith('card:'), months = card ? Math.max(0, Math.round(num(e.months))) : 0;
+    let m = String(e.method||'cash');
+    if(m === 'debit'){ needAcc('bank','Bank','#4A5D70'); m = 'acct:bank'; }          // from before: "Debit" is now "Bank"
+    else if(m === 'gcash'){ needAcc('gcash','GCash','#007DFE'); m = 'acct:gcash'; }
+    else if(!(m === 'cash' || /^acct:./.test(m) || /^card:./.test(m))) m = 'cash';    // keep anything that names an account or card
+    const card = m.startsWith('card:') && cardIds.has(m.slice(5)), months = card ? Math.max(0, Math.round(num(e.months))) : 0;
     return { id:String(e.id||uid()), date:e.date, desc:String(e.desc||''), amount:r2(num(e.amount)), cat:e.cat==='need'?'need':'want', method:m,
       months, monthly: months>0 && num(e.monthly)>0 ? r2(num(e.monthly)) : null };
   });
@@ -462,6 +488,33 @@ function normalize(s){
   recalcOf(o);
   return o;
 }
+// ---------- colors for wallets, banks and cards ----------
+const DEFAULT_ACCOUNTS = [{id:'gcash', name:'GCash', color:'#007DFE'}, {id:'maya', name:'Maya', color:'#00C66B'}, {id:'bank', name:'Bank', color:'#4A5D70'}];
+const PALETTE = ['#B11116','#F47920','#E0A800','#00C66B','#4F6B5A','#0FA3B1','#007DFE','#1F3A93','#7B3FB8','#4A5D70'];
+const BRANDS = [[/\bbpi\b/i,'#B11116'], [/union ?bank|\bub\b/i,'#F47920'], [/gcash/i,'#007DFE'], [/\bmaya\b/i,'#00C66B'],
+                [/\bbdo\b/i,'#0033A0'], [/metrobank/i,'#0A3B8C'], [/landbank/i,'#0B8F3A']];
+const CASH_COLOR = '#4F6B5A';
+const okColor = v => /^#[0-9a-fA-F]{6}$/.test(v||'') ? v : null;
+function brandColor(name, i){ for(const [re, col] of BRANDS) if(re.test(name||'')) return col; return PALETTE[(i||0) % PALETTE.length]; }
+const hexRgb = h => [1,3,5].map(k => parseInt(h.slice(k,k+2),16));
+const rgbHex = a => '#' + a.map(v => Math.round(Math.max(0,Math.min(255,v))).toString(16).padStart(2,'0')).join('');
+const mixHex = (a, b, t) => { const x = hexRgb(a), y = hexRgb(b); return rgbHex(x.map((v,k)=>v + (y[k]-v)*t)); };
+function lum(h){ return hexRgb(h).map(v=>{ v/=255; return v<=0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4); }).reduce((s,v,k)=>s+v*[0.2126,0.7152,0.0722][k],0); }
+// text on a filled chip: white on darker colors, a deep shade of the same color on bright ones (orange, green)
+const onColor = h => lum(h) > 0.3 ? mixHex(h, '#000000', 0.78) : '#FFFFFF';
+// every color lookup falls back to one based on the name, so nothing is ever left without a color
+const colorOf = (o, i) => okColor(o && o.color) || brandColor(o && o.name, i);
+function methodColor(m){
+  if(m === 'cash') return CASH_COLOR;
+  if(m.startsWith('acct:')){ const i = state.accounts.findIndex(x=>x.id===m.slice(5)); return i>=0 ? colorOf(state.accounts[i], i) : '#888888'; }
+  if(m.startsWith('card:')){ const i = state.cards.findIndex(x=>x.id===m.slice(5)); return i>=0 ? colorOf(state.cards[i], i) : '#888888'; }
+  return '#888888';
+}
+function methodVars(m){ const col = methodColor(m);
+  return `--mc:${col};--mon:${onColor(col)};--tlb:${mixHex(col,'#FFFFFF',0.84)};--tlf:${mixHex(col,'#000000',0.42)};--tdb:${mixHex(col,'#12171C',0.72)};--tdf:${mixHex(col,'#FFFFFF',0.45)}`; }
+const methodTag = m => `<span class="tag m" style="${methodVars(m)}">${esc(methodLabel(m))}</span>`;
+const allMethods = () => ['cash', ...state.accounts.map(a=>'acct:'+a.id), ...state.cards.map(c=>'card:'+c.id)];
+
 function recalcOf(s){
   s.savings.balance = r2(num(s.savings.adj) + s.savings.log.reduce((t,e)=>t+e.amount,0));
   for(const g of s.goals) for(const a of g.accounts) a.amount = r2(num(a.adj) + s.goalLog.filter(e=>e.goalId===g.id && e.acctId===a.id).reduce((t,e)=>t+e.amount,0));
@@ -559,7 +612,12 @@ function paidSince(c, from){ return r2(state.cardPays.filter(p=>p.cardId===c.id 
 const isTyping = a => !!a && ((a.tagName==='INPUT' && !['checkbox','radio','button','submit'].includes(a.type)) || a.tagName==='TEXTAREA' || a.tagName==='SELECT');
 function setLive(id, html){ const el=$(id); if(!el) return; const a=document.activeElement; if(isTyping(a) && el.contains(a)) return; el.innerHTML = html; }
 const pct = (a,b) => b>0 ? Math.min(100, a/b*100) : (a>0?100:0);
-const methodLabel = m => m==='cash'?'Cash':m==='debit'?'Debit':m==='gcash'?'GCash':((cardById(m.slice(5))||{}).name||'Card');
+function methodLabel(m){
+  if(m === 'cash') return 'Cash';
+  if(m.startsWith('acct:')){ const a = state.accounts.find(x=>x.id===m.slice(5)); return a ? a.name : 'Removed account'; }
+  if(m.startsWith('card:')){ const c = cardById(m.slice(5)); return c ? c.name : 'Removed card'; }
+  return m;
+}
 
 function renderPeriod(){
   const p = viewPay, isCur = p === curPay();
@@ -601,17 +659,18 @@ function renderHomeCards(){
   setLive('homeCards', `<h2>Cards</h2>` + state.cards.map(c => {
     const cur = closeFor(today(), c), s = cycleStats(c, cur), lv = cycleLevel(s), pay = payingStatus(c);
     const daysLeft = Math.max(1, daysBetween(today(), cur) + 1);
-    return `<button class="cardsum" data-tab="cards"><div class="cardhead" style="margin:0;"><b>${esc(c.name)}</b><span class="hint" style="margin:0;">${pay.text}</span></div>
+    return `<button class="cardsum" data-tab="cards"><div class="cardhead" style="margin:0;"><b><span class="cdot" style="background:${colorOf(c)}"></span>${esc(c.name)}</b><span class="hint" style="margin:0;">${pay.text}</span></div>
       <div class="l ${lv.cls==='over'?'bad':lv.cls==='warn'?'soon':'ok'}">${lv.amt} <span style="font-family:var(--sans);font-size:.76rem;font-weight:400;color:var(--ink-soft);">${lv.lbl} until ${shortWords(cur)}</span></div>
       ${s.left>0 && !s.missing.length ? `<div class="daily">About ${fmt(s.left/daysLeft)} a day</div>` : ''}</button>`; }).join(''));
 }
-const methodOptions = sel => ['cash','debit','gcash',...state.cards.map(c=>'card:'+c.id)].map(m=>`<option value="${m}" ${m===sel?'selected':''}>${esc(methodLabel(m))}</option>`).join('');
+const methodOptions = sel => allMethods().map(m=>`<option value="${m}" ${m===sel?'selected':''}>${esc(methodLabel(m))}</option>`).join('');
 
 // ----- spend -----
 let formCat='want', formMethod=null, editingId=null;
 function renderMethodChips(){
   if(!formMethod) formMethod = state.cards.length ? 'card:'+state.cards[0].id : 'cash';   // the first card is the default
-  $('eMethod').innerHTML = ['cash','debit','gcash',...state.cards.map(c=>'card:'+c.id)].map(m => `<button data-method="${esc(m)}" class="${formMethod===m?'on':''} ${m.startsWith('card:')?'cc':''}">${esc(methodLabel(m))}</button>`).join('');
+  if(!allMethods().includes(formMethod)) formMethod = state.cards.length ? 'card:'+state.cards[0].id : 'cash';
+  $('eMethod').innerHTML = allMethods().map(m => `<button data-method="${esc(m)}" class="mchip ${formMethod===m?'on':''}" style="${methodVars(m)}"><span class="dot"></span>${esc(methodLabel(m))}</button>`).join('');
 }
 function refreshForm(){
   $('eDateWords').textContent = words($('eDate').value) || 'Pick a date';
@@ -649,7 +708,7 @@ function expRow(e, p){
   if(e.months>0){ const first = closeFor(e.date,c); let k=-1; for(let i=0;i<e.months;i++){ if(payFor(shiftClose(first,i,c))===p){ k=i; break; } }
     if(k>=0){ amtShown = slice(e,k); sub += ` · payment ${k+1} of ${e.months}`; }
     else { amtShown = null; sub += ` · bought this payday, payments count from the ${shortWords(payFor(first))} payday`; } }
-  const tags = `<span class="tag ${c?'cc':''}">${esc(methodLabel(e.method))}</span>`
+  const tags = methodTag(e.method)
     + (e.months>0 ? `<span class="tag cc">${e.months} mo · ${fmt(slice(e,0))}/mo${e.monthly && r2(e.monthly*e.months - e.amount)>0 ? ' · +'+fmt(r2(e.monthly*e.months-e.amount))+' interest':''}</span>` : '')
     ;
   return `<div class="row"><div class="what"><b>${esc(e.desc)||'(no description)'}</b><small>${sub}</small><div>${tags}</div></div>
@@ -760,10 +819,11 @@ function renderCards(){
         <label class="f">Card name<input type="text" data-cname="${esc(c.id)}" value="${esc(c.name)}"></label>
         <div class="row2" style="margin-top:8px;"><label class="f">Statement closes on day<input type="number" inputmode="numeric" data-cclose="${esc(c.id)}" value="${c.close}"></label>
           <label class="f">Days until payment due<input type="number" inputmode="numeric" data-cdue="${esc(c.id)}" value="${c.due}"></label></div>
+        <span class="lbl" style="margin-top:10px;">Color</span>${swatches('cardcolor', c.id, colorOf(c))}
         <label class="check-line"><input type="checkbox" data-cneed="${esc(c.id)}" ${c.payNeed?'checked':''}> Payments count as an Essential (for paying off an old balance)</label>
         <div class="inline" style="margin-top:10px;"><button class="btn green" style="flex:1;" data-carddone="${esc(c.id)}">Done</button><button class="btn out" data-cdel="${esc(c.id)}">Remove card</button></div></div>` : '';
     return `<div class="card" id="card-${esc(c.id)}">
-      <div class="cardhead"><h2>${esc(c.name)}</h2><button class="linkbtn" data-cardedit="${esc(c.id)}">${editingCard===c.id?'Close':'Edit'}</button></div>
+      <div class="cardhead"><h2><span class="cdot" style="background:${colorOf(c)}"></span>${esc(c.name)}</h2><button class="linkbtn" data-cardedit="${esc(c.id)}">${editingCard===c.id?'Close':'Edit'}</button></div>
       <div class="hint" style="margin-top:-4px;">Statement closes on the ${c.close}${sfx(c.close)} · payment due ${c.due} days later</div>
       ${edit}
       <div class="periods">${show('paying', last, ps.done)}${show('now', cur, false)}${show('next', next, true)}</div>
@@ -817,7 +877,16 @@ function renderGoals(){
 }
 
 // ----- more: settings, cards, bills -----
+const swatches = (kind, id, cur) => `<div class="swatches">${PALETTE.concat(PALETTE.includes(cur)?[]:[cur]).map(col =>
+  `<button data-${kind}="${esc(id)}|${col}" class="${col===cur?'on':''}" style="background:${col}" aria-label="Color ${col}"></button>`).join('')}</div>`;
+function renderAccounts(){
+  setLive('acctEdit', `<div class="pmrow"><b><span class="cdot" style="background:${CASH_COLOR}"></span>Cash</b> <span class="hint" style="margin:0;">always available</span></div>`
+    + state.accounts.map(a => `<div class="pmrow"><div class="inline"><span class="cdot" style="background:${colorOf(a)};margin:0;"></span>
+        <input type="text" data-pmname="${esc(a.id)}" value="${esc(a.name)}" aria-label="Name"><button class="iconbtn" data-pmdel="${esc(a.id)}" aria-label="Remove">✕</button></div>
+        ${swatches('pmcolor', a.id, colorOf(a))}</div>`).join(''));
+}
 function syncSettings(){
+  renderAccounts();
   const st = S();
   for(const [id,v] of [['sNeed',st.need],['sWant',st.want],['sSave',st.save],['sEvery',st.every],['sAnchor',st.anchor],['sDay1',st.day1],['sDay2',st.day2],['sMday',st.mday]]){ const el=$(id); if(el!==document.activeElement) el.value=v; }
   $$('#payTypeChips button').forEach(b => b.classList.toggle('on', b.dataset.paytype === st.payType));
@@ -897,7 +966,8 @@ $('sAnchor').addEventListener('input', () => $('sAnchorWords').textContent = wor
 document.addEventListener('input', e => {
   const t = e.target, d = t.dataset || {};
   const g = id => state.goals.find(x=>x.id===id);
-  if(d.cname){ const c=cardById(d.cname); if(c){ c.name = t.value.trim() || c.name; save(); renderMethodChips(); refreshForm(); renderHome(); renderList(); } }
+  if(d.cname){ const c=cardById(d.cname); if(c){ c.name = t.value.trim() || c.name; if(!c.colorPicked) c.color = brandColor(c.name, state.cards.indexOf(c)); save(); renderMethodChips(); refreshForm(); renderHome(); renderList(); } }
+  else if(d.pmname){ const a=state.accounts.find(x=>x.id===d.pmname); if(a){ a.name = t.value.trim() || a.name; if(!a.colorPicked) a.color = brandColor(a.name, state.accounts.indexOf(a)); save(); renderMethodChips(); refreshForm(); renderList(); } }
   else if(d.cclose){ const c=cardById(d.cclose); if(c){ const v=Math.round(num(t.value)); if(v>=1&&v<=28){ c.close=v; save(); renderHome(); renderList(); refreshForm(); } } }
   else if(d.cdue){ const c=cardById(d.cdue); if(c){ const v=Math.round(num(t.value)); if(v>=1&&v<=60){ c.due=v; save(); renderHome(); } } }
   else if(d.stmtchk){ const [cid, cl] = d.stmtchk.split('|'), c = cardById(cid); if(c){
@@ -916,11 +986,18 @@ document.addEventListener('change', e => { const t=e.target, d=t.dataset||{};
 });
 
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-paytype],[data-tab],[data-pay-nav],[data-cat],[data-method],[data-edit],[data-del],[data-paycard],[data-payrest],[data-expand],[data-collapse],[data-cardedit],[data-carddone],[data-cpsave],[data-cpdel],[data-cpfixsave],[data-savdel],[data-gacct],[data-gadd],[data-gout],[data-gldel],[data-goaledit],[data-goaldone],[data-aadd],[data-adel],[data-gdel],[data-cdel],[data-action],[data-theme-set]');
+  const el = e.target.closest('[data-pmcolor],[data-cardcolor],[data-pmdel],[data-paytype],[data-tab],[data-pay-nav],[data-cat],[data-method],[data-edit],[data-del],[data-paycard],[data-payrest],[data-expand],[data-collapse],[data-cardedit],[data-carddone],[data-cpsave],[data-cpdel],[data-cpfixsave],[data-savdel],[data-gacct],[data-gadd],[data-gout],[data-gldel],[data-goaledit],[data-goaldone],[data-aadd],[data-adel],[data-gdel],[data-cdel],[data-action],[data-theme-set]');
   if(!el) return; const d = el.dataset;
   if(d.tab){ showTab(d.tab); return; }
   if(d.payNav){ const k=Number(d.payNav); const np = k>0 ? nextPay(viewPay) : prevPay(viewPay); if(k>0 && viewPay>=nextPay(curPay())) return; viewPay=np; renderPeriod(); renderHome(); renderList(); return; }
   if(d.themeSet){ setTheme(d.themeSet); return; }
+  if(d.pmcolor){ const [id, col] = d.pmcolor.split('|'), a = state.accounts.find(x=>x.id===id); if(a && okColor(col)){ a.color = col; a.colorPicked = true; save(); renderAccounts(); renderMethodChips(); refreshForm(); renderList(); } return; }
+  if(d.cardcolor){ const [id, col] = d.cardcolor.split('|'), cd = cardById(id); if(cd && okColor(col)){ cd.color = col; cd.colorPicked = true; save(); renderMethodChips(); refreshForm(); refresh(); } return; }
+  if(d.pmdel){ const a = state.accounts.find(x=>x.id===d.pmdel); if(!a) return;
+    const used = state.expenses.some(x=>x.method==='acct:'+a.id);
+    if(await ask(`Remove ${a.name}?${used ? ` Expenses paid with it will change to Cash.` : ''}`, [{label:'Remove', cls:'danger'},{label:'Cancel', cls:'ghost'}])!==0) return;
+    state.accounts = state.accounts.filter(x=>x.id!==a.id); state.expenses.forEach(x=>{ if(x.method==='acct:'+a.id) x.method='cash'; });
+    if(formMethod==='acct:'+a.id) formMethod=null; save(); renderAll(); return; }
   if(d.paytype){ S().payType = d.paytype; viewPay = payFor(viewPay); save(); renderAll(); return; }
   if(d.cat){ formCat=d.cat; refreshForm(); return; }
   if(d.method){ formMethod=d.method; refreshForm(); return; }
@@ -981,8 +1058,10 @@ document.addEventListener('click', async e => {
   switch(d.action){
     case 'addGoal': { const g={id:uid(), name:'New goal', target:10000, accounts:[{id:uid(), name:'Savings', amount:0}]}; state.goals.push(g); editingGoal=g.id; save(); renderGoals();
       setTimeout(()=>{ const n=document.querySelector(`[data-gname="${g.id}"]`); if(n){ n.focus(); n.select(); } },50); break; }
-    case 'addCard': { const nc={id:uid(), name:'New card', close:15, due:19, start:0, payNeed:false}; state.cards.push(nc); editingCard=nc.id; save(); renderAll();
+    case 'addCard': { const nc={id:uid(), name:'New card', close:15, due:19, start:0, payNeed:false, color:PALETTE[(state.cards.length+1) % PALETTE.length], colorPicked:false}; state.cards.push(nc); editingCard=nc.id; save(); renderAll();
       setTimeout(()=>{ const n=document.querySelector(`[data-cname="${nc.id}"]`); if(n){ n.scrollIntoView({block:'center'}); n.focus({preventScroll:true}); n.select(); } },60); break; }
+    case 'addAcct': { const na = {id:uid(), name:'New account', color:PALETTE[state.accounts.length % PALETTE.length], colorPicked:false}; state.accounts.push(na); save(); renderAccounts(); renderMethodChips();
+      setTimeout(()=>{ const n=document.querySelector(`[data-pmname="${na.id}"]`); if(n){ n.focus(); n.select(); } },50); break; }
     case 'welcomeDone': state.settings.welcomed = true; save(); renderWelcome(); break;
     case 'syncOn': enableSync(); break;
     case 'syncNow': runSync(); break;
@@ -1032,6 +1111,7 @@ setInterval(dayCheck, 60000);
 // secret gist on your GitHub. Each record carries the time it last changed; when devices differ, the newest
 // version of each record wins and deletions carry over.
 let API = 'https://api.github.com';
+const SCHEMA = 2;   // raise when the saved format changes, so an older copy of the app pauses syncing instead of mixing formats
 const SYNC_KEY = 'financial:sync', GIST_DESC = 'Financial tracker sync (encrypted)', GIST_FILE = 'financial-sync.json';
 let sync = null; try{ sync = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null'); }catch(_){ sync = null; }
 let syncBusy = false, syncAgain = false, syncTimer = null, lastSyncAt = null, syncState = 'off', syncDetail = '', lastRec = null;
@@ -1041,6 +1121,7 @@ function recordsOf(s){
   r.set('set', JSON.stringify(s.settings));
   r.set('sadj', JSON.stringify({adj:num(s.savings.adj)}));
   for(const c of s.cards) r.set('card:'+c.id, JSON.stringify(c));
+  for(const a of (s.accounts||[])) r.set('acct:'+a.id, JSON.stringify(a));
   for(const d of Object.keys(s.paydays).sort()) r.set('pay:'+d, JSON.stringify(s.paydays[d]));
   for(const e of s.expenses) r.set('exp:'+e.id, JSON.stringify(e));
   for(const p of s.cardPays) r.set('cp:'+p.id, JSON.stringify(p));
@@ -1051,9 +1132,9 @@ function recordsOf(s){
   return r;
 }
 function fromRecords(map, meta){
-  const s = {settings:{}, paydays:{}, cards:[], cardPays:[], expenses:[], savings:{adj:0, log:[]}, goals:[], goalLog:[], stmtChecks:{}, meta};
+  const s = {settings:{}, paydays:{}, cards:[], accounts:[], cardPays:[], expenses:[], savings:{adj:0, log:[]}, goals:[], goalLog:[], stmtChecks:{}, meta};
   for(const [k, j] of map){ const v = JSON.parse(j), i = k.indexOf(':'), type = i<0 ? k : k.slice(0,i), id = i<0 ? '' : k.slice(i+1);
-    if(type==='set') s.settings = v; else if(type==='sadj') s.savings.adj = v.adj; else if(type==='card') s.cards.push(v);
+    if(type==='set') s.settings = v; else if(type==='sadj') s.savings.adj = v.adj; else if(type==='card') s.cards.push(v); else if(type==='acct') s.accounts.push(v);
     else if(type==='pay') s.paydays[id] = v; else if(type==='exp') s.expenses.push(v); else if(type==='cp') s.cardPays.push(v);
     else if(type==='sl') s.savings.log.push(v); else if(type==='goal') s.goals.push({...v, accounts:v.accounts.map(a=>({...a, amount:0}))});
     else if(type==='gl') s.goalLog.push(v); else if(type==='chk') s.stmtChecks[id] = v; }
@@ -1114,7 +1195,7 @@ async function readEnvelope(id, token){
   return JSON.parse(text);
 }
 async function writeEnvelope(s){
-  const env = {app:'financial', v:1, salt:sync.salt, ...(await encryptState(s, sync.key)), at:new Date().toISOString()};
+  const env = {app:'financial', v:1, schema:SCHEMA, salt:sync.salt, ...(await encryptState(s, sync.key)), at:new Date().toISOString()};
   await gh('/gists/' + sync.gistId, {method:'PATCH', body:JSON.stringify({files:{[GIST_FILE]:{content:JSON.stringify(env)}}})});
 }
 // keep the merged copy on this device without marking anything as newly changed
@@ -1137,6 +1218,7 @@ async function runSync(){
     // so two devices coming online together can't overwrite each other's entries.
     for(let round = 0; round < 4; round++){
       const env = await readEnvelope(sync.gistId);
+      if((env.schema||1) > SCHEMA){ setSyncStatus('error', 'Another device has a newer version of Financial. Close and reopen this app while online to update it, then it will sync again.'); return; }
       const remote = env && env.data ? normalize(await decryptState(env, sync.key)) : null;
       const merged = remote ? mergeStates(state, remote) : state;     // against what's on screen right now
       if(remote && sigOf(merged) !== sigOf(state)) applyMerged(merged);
@@ -1219,7 +1301,7 @@ async function enableSync(){
     } else {
       // first device: create the private, encrypted sync file
       const salt = toB64(crypto.getRandomValues(new Uint8Array(16))), key = await deriveKey(pass, salt);
-      const env = {app:'financial', v:1, salt, ...(await encryptState(state, key)), at:new Date().toISOString()};
+      const env = {app:'financial', v:1, schema:SCHEMA, salt, ...(await encryptState(state, key)), at:new Date().toISOString()};
       const g = await gh('/gists', {method:'POST', body:JSON.stringify({description:GIST_DESC, public:false, files:{[GIST_FILE]:{content:JSON.stringify(env)}}})}, token);
       sync = {token, gistId:g.id, salt, key, login:user.login};
       localStorage.setItem(SYNC_KEY, JSON.stringify(sync));
