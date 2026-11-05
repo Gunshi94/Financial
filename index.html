@@ -179,6 +179,10 @@
   .sync-steps li{margin-bottom:4px;}
   .sync-ok{background:var(--green-soft); border-radius:10px; padding:10px 12px; font-size:.84rem; line-height:1.5;}
   .sync-err{background:var(--red-soft); color:var(--red); border-radius:10px; padding:10px 12px; font-size:.84rem; font-weight:600; margin-top:10px;}
+  #welcomeBox:empty{display:none;}
+  @media (min-width:720px){ #welcomeBox{grid-column:1/-1;} }
+  .welcome{background:var(--green-soft); border:1.5px solid var(--green); border-radius:14px; padding:14px; margin-bottom:12px;}
+  .welcome ol{margin:8px 0 12px; padding-left:20px; font-size:.86rem; line-height:1.6;}
   .toast{position:fixed; left:50%; transform:translate(-50%,20px); bottom:calc(var(--nav-h) + env(safe-area-inset-bottom) + 14px);
     background:var(--ink-bg); color:var(--on-dark); padding:11px 16px; border-radius:24px; font-size:.84rem; z-index:50;
     display:flex; gap:12px; align-items:center; opacity:0; pointer-events:none; transition:.25s; max-width:92vw;}
@@ -229,6 +233,7 @@
 <main>
   <!-- HOME -->
   <section class="view active" id="view-home">
+    <div id="welcomeBox"></div>
     <div class="card">
       <div class="period">
         <button class="nav" data-pay-nav="-1" aria-label="Earlier payday">◀</button>
@@ -300,7 +305,7 @@
           <h3>Add or take out</h3>
           <div class="row2">
             <label class="f">Amount (₱)<input type="number" inputmode="decimal" step="0.01" id="savAmt" placeholder="e.g. 1100"></label>
-            <label class="f">What for? (optional)<input type="text" id="savNote" placeholder="e.g. Maribank leftover" autocomplete="off"></label>
+            <label class="f">What for? (optional)<input type="text" id="savNote" placeholder="e.g. Bonus or extra income" autocomplete="off"></label>
           </div>
           <div class="inline" style="margin-top:10px;"><button class="btn" id="savAdd" style="flex:1;">+ Add</button><button class="btn out" id="savOut" style="flex:1;">− Take out</button></div>
           <details class="more"><summary>Correct the balance</summary>
@@ -334,10 +339,22 @@
             <label class="f">Savings %<input type="number" inputmode="decimal" id="sSave"></label>
           </div>
           <div class="warnline" id="splitWarn"></div>
-          <div class="row2" style="margin-top:12px;">
+        </div>
+        <div class="card">
+          <h2 style="margin-bottom:10px;">Pay schedule</h2>
+          <div class="chips" id="payTypeChips"><button data-paytype="every">Every few days</button><button data-paytype="twice">Twice a month</button><button data-paytype="monthly">Once a month</button></div>
+          <div class="row2" id="payEvery" style="margin-top:12px;">
             <label class="f">One of your paydays<div class="date-wrap"><input type="date" id="sAnchor"><span class="date-words" id="sAnchorWords"></span></div></label>
             <label class="f">Paid every (days)<input type="number" inputmode="numeric" id="sEvery"></label>
           </div>
+          <div class="row2" id="payTwice" style="margin-top:12px;">
+            <label class="f">First payday (day of month)<input type="number" inputmode="numeric" id="sDay1" min="1" max="31"></label>
+            <label class="f">Second payday (day of month)<input type="number" inputmode="numeric" id="sDay2" min="1" max="31"></label>
+          </div>
+          <div class="row2" id="payMonthly" style="margin-top:12px;">
+            <label class="f">Payday (day of month)<input type="number" inputmode="numeric" id="sMday" min="1" max="31"></label>
+          </div>
+          <p class="hint" id="payHint"></p>
         </div>
         <div class="card">
           <h2 style="margin-bottom:10px;">Appearance</h2>
@@ -392,7 +409,7 @@ const KEY = 'budgetcc:state', THEME_KEY = 'budgetcc:theme';
 
 function defaults(){
   return {
-    settings:{ need:50, want:30, save:20, anchor:'2026-10-23', every:14 },
+    settings:{ need:50, want:30, save:20, payType:'every', anchor:today(), every:14, day1:15, day2:31, mday:30 },
     paydays:{},     // payday -> {income}
     cards:[],       // {id,name,close,due,start,payNeed}
     cardPays:[],    // {id,cardId,date,amount,fromSavings,note}
@@ -409,6 +426,10 @@ function normalize(s){
   ['need','want','save'].forEach(k => st[k] = Math.min(100, Math.max(0, num(st[k]))));
   st.every = Math.min(31, Math.max(7, Math.round(num(st.every)) || 14));
   if(!isoOk(st.anchor)) st.anchor = d.settings.anchor;
+  st.payType = ['every','twice','monthly'].includes(st.payType) ? st.payType : 'every';
+  const dom = (v, dflt) => Math.min(31, Math.max(1, Math.round(num(v)) || dflt));
+  st.day1 = dom(st.day1, 15); st.day2 = dom(st.day2, 31); st.mday = dom(st.mday, 30);
+  if(st.day1 > st.day2) [st.day1, st.day2] = [st.day2, st.day1];
   o.settings = st;
   o.paydays = {}; Object.entries((s&&s.paydays)||{}).forEach(([k,v]) => { if(isoOk(k)&&v) o.paydays[k] = {income:r2(num(v.income))}; });
   o.cards = ((s&&s.cards)||[]).filter(Boolean).map(c => ({ id:String(c.id||uid()), name:String(c.name||'Card').trim()||'Card',
@@ -457,9 +478,27 @@ document.addEventListener('visibilitychange', () => { if(document.visibilityStat
 
 // ===================== paydays =====================
 const S = () => state.settings;
-function payFor(d){ const A=toMs(S().anchor), step=S().every*DAY; return toIso(A + Math.floor((toMs(d)-A)/step)*step); }
-const payEnd = p => addDays(p, S().every-1);
-const nextPay = p => addDays(p, S().every);
+// Paydays come from your pay schedule: every N days from a known payday, or fixed dates each month
+// (a day past the end of a month counts as that month's last day, so "31" works in every month).
+const lastDayOf = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+const shiftMonth = (y, m, k) => { m += k; while(m > 12){ m -= 12; y++; } while(m < 1){ m += 12; y--; } return [y, m]; };
+function monthPays(y, m){
+  const st = S(), last = lastDayOf(y, m), days = st.payType === 'twice' ? [st.day1, st.day2] : [st.mday];
+  return [...new Set(days.map(d => Math.min(d, last)))].sort((a,b) => a-b).map(d => `${y}-${pad(m)}-${pad(d)}`);
+}
+function payFor(d){            // the payday a date belongs to: the latest payday on or before it
+  const st = S();
+  if(st.payType === 'every'){ const A = toMs(st.anchor), step = st.every*DAY; return toIso(A + Math.floor((toMs(d)-A)/step)*step); }
+  const [y, m] = d.split('-').map(Number);
+  for(let k = 0; k >= -2; k--){ const [yy, mm] = shiftMonth(y, m, k), c = monthPays(yy, mm).filter(x => x <= d); if(c.length) return c[c.length-1]; }
+}
+function nextPay(p){
+  const st = S(); if(st.payType === 'every') return addDays(p, st.every);
+  const [y, m] = p.split('-').map(Number);
+  for(let k = 0; k <= 2; k++){ const [yy, mm] = shiftMonth(y, m, k), c = monthPays(yy, mm).filter(x => x > p); if(c.length) return c[0]; }
+}
+const prevPay = p => payFor(addDays(p, -1));
+const payEnd = p => addDays(nextPay(p), -1);
 const inPay = (d,p) => d >= p && d <= payEnd(p);
 const incomeOf = p => num((state.paydays[p]||{}).income);
 const caps = p => { const i = incomeOf(p); return { need:r2(i*S().need/100), want:r2(i*S().want/100), save:r2(i*S().save/100) }; };
@@ -492,7 +531,7 @@ function eachCharge(fn){
 function spentIn(p){
   const r = {need:0, want:0};
   eachCharge((e,a,pp)=>{ if(pp===p) r[e.cat]+=a; });
-  // payments toward a card's old balance (like BPI) count as an essential when that card is set up that way
+  // payments toward a card's old balance count as an essential when that card is set up that way
   for(const cp of state.cardPays){ const c = cardById(cp.cardId); if(c && c.payNeed && inPay(cp.date,p)) r.need += cp.amount; }
   r.need=r2(r.need); r.want=r2(r.want); return r;
 }
@@ -529,7 +568,16 @@ function renderPeriod(){
   $$('[data-pay-nav="1"]').forEach(b => b.disabled = p >= nextPay(curPay()));   // you can enter the next payday ahead of time
   const box = $('incomeBox'); if(box !== document.activeElement) box.value = incomeOf(p) || '';
 }
+const showWelcome = () => !S().welcomed && !state.cards.length && !state.goals.length && !hasEntries(state);
+function renderWelcome(){
+  setLive('welcomeBox', showWelcome() ? `<div class="welcome"><h2>Welcome to Financial</h2>
+    <ol><li><b>Set your pay schedule:</b> under <b>More</b>, choose every few days, twice a month (like the 15th and 30th) or once a month</li>
+      <li><b>Enter your take-home pay</b> below. It splits into Essentials, Non-essentials and Savings.</li>
+      <li><b>Add your credit cards</b> on the <b>Cards</b> tab, and any goals under <b>Savings</b></li></ol>
+    <div class="inline"><button class="btn green" style="flex:1;" data-tab="more">Set my payday</button><button class="btn ghost" data-action="welcomeDone">Got it</button></div></div>` : '');
+}
 function renderHome(){
+  renderWelcome();
   const p = viewPay, c = caps(p), s = spentIn(p), sv = savedIn(p), isCur = p === curPay();
   setLive('splitTiles', `<div class="split3">
     <div class="tile need"><small>Essentials ${S().need}%</small><b>${fmt(c.need)}</b></div>
@@ -771,7 +819,14 @@ function renderGoals(){
 // ----- more: settings, cards, bills -----
 function syncSettings(){
   const st = S();
-  for(const [id,v] of [['sNeed',st.need],['sWant',st.want],['sSave',st.save],['sEvery',st.every],['sAnchor',st.anchor]]){ const el=$(id); if(el!==document.activeElement) el.value=v; }
+  for(const [id,v] of [['sNeed',st.need],['sWant',st.want],['sSave',st.save],['sEvery',st.every],['sAnchor',st.anchor],['sDay1',st.day1],['sDay2',st.day2],['sMday',st.mday]]){ const el=$(id); if(el!==document.activeElement) el.value=v; }
+  $$('#payTypeChips button').forEach(b => b.classList.toggle('on', b.dataset.paytype === st.payType));
+  $('payEvery').style.display = st.payType==='every' ? '' : 'none';
+  $('payTwice').style.display = st.payType==='twice' ? '' : 'none';
+  $('payMonthly').style.display = st.payType==='monthly' ? '' : 'none';
+  { const ups = []; let q = nextPay(curPay()); for(let i=0;i<3;i++){ ups.push(shortWords(q)); q = nextPay(q); }
+    $('payHint').innerHTML = `Next paydays: <b>${ups.join(', ')}</b>.` + (st.payType==='every' ? '' : ' A day past the end of a month counts as its last day, so 31 means "last day of the month".')
+      + ' Changing your schedule doesn\'t move pay you\'ve already entered.'; }
   $('sAnchorWords').textContent = words(st.anchor);
   const tot = st.need+st.want+st.save; setText('splitWarn', Math.abs(tot-100)>.001 ? `These add up to ${tot}%. They should total 100%.` : '');
 }
@@ -831,8 +886,11 @@ $('savBalance').addEventListener('input', e => { state.savings.adj = r2(num(e.ta
 function applySettings(){ const st=S();
   st.need=Math.min(100,Math.max(0,num($('sNeed').value))); st.want=Math.min(100,Math.max(0,num($('sWant').value))); st.save=Math.min(100,Math.max(0,num($('sSave').value)));
   st.every=Math.min(31,Math.max(7,Math.round(num($('sEvery').value))||st.every)); if(isoOk($('sAnchor').value)) st.anchor=$('sAnchor').value;
+  const dom = (id, cur) => Math.min(31, Math.max(1, Math.round(num($(id).value)) || cur));
+  st.day1 = dom('sDay1', st.day1); st.day2 = dom('sDay2', st.day2); st.mday = dom('sMday', st.mday);
+  if(st.day1 > st.day2) [st.day1, st.day2] = [st.day2, st.day1];
   viewPay=payFor(viewPay); save(); renderAll(); }
-['sNeed','sWant','sSave','sEvery','sAnchor'].forEach(id => $(id).addEventListener('change', applySettings));
+['sNeed','sWant','sSave','sEvery','sAnchor','sDay1','sDay2','sMday'].forEach(id => $(id).addEventListener('change', applySettings));
 $('sAnchor').addEventListener('input', () => $('sAnchorWords').textContent = words($('sAnchor').value));
 
 // typing inside the editors and goal boxes: update the data straight away, redraw the rest
@@ -858,11 +916,12 @@ document.addEventListener('change', e => { const t=e.target, d=t.dataset||{};
 });
 
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-tab],[data-pay-nav],[data-cat],[data-method],[data-edit],[data-del],[data-paycard],[data-payrest],[data-expand],[data-collapse],[data-cardedit],[data-carddone],[data-cpsave],[data-cpdel],[data-cpfixsave],[data-savdel],[data-gacct],[data-gadd],[data-gout],[data-gldel],[data-goaledit],[data-goaldone],[data-aadd],[data-adel],[data-gdel],[data-cdel],[data-action],[data-theme-set]');
+  const el = e.target.closest('[data-paytype],[data-tab],[data-pay-nav],[data-cat],[data-method],[data-edit],[data-del],[data-paycard],[data-payrest],[data-expand],[data-collapse],[data-cardedit],[data-carddone],[data-cpsave],[data-cpdel],[data-cpfixsave],[data-savdel],[data-gacct],[data-gadd],[data-gout],[data-gldel],[data-goaledit],[data-goaldone],[data-aadd],[data-adel],[data-gdel],[data-cdel],[data-action],[data-theme-set]');
   if(!el) return; const d = el.dataset;
   if(d.tab){ showTab(d.tab); return; }
-  if(d.payNav){ const k=Number(d.payNav); const np = addDays(viewPay, k*S().every); if(k>0 && viewPay>=nextPay(curPay())) return; viewPay=np; renderPeriod(); renderHome(); renderList(); return; }
+  if(d.payNav){ const k=Number(d.payNav); const np = k>0 ? nextPay(viewPay) : prevPay(viewPay); if(k>0 && viewPay>=nextPay(curPay())) return; viewPay=np; renderPeriod(); renderHome(); renderList(); return; }
   if(d.themeSet){ setTheme(d.themeSet); return; }
+  if(d.paytype){ S().payType = d.paytype; viewPay = payFor(viewPay); save(); renderAll(); return; }
   if(d.cat){ formCat=d.cat; refreshForm(); return; }
   if(d.method){ formMethod=d.method; refreshForm(); return; }
   if(d.edit){ const x=state.expenses.find(z=>z.id===d.edit); if(!x) return; editingId=x.id;
@@ -924,6 +983,7 @@ document.addEventListener('click', async e => {
       setTimeout(()=>{ const n=document.querySelector(`[data-gname="${g.id}"]`); if(n){ n.focus(); n.select(); } },50); break; }
     case 'addCard': { const nc={id:uid(), name:'New card', close:15, due:19, start:0, payNeed:false}; state.cards.push(nc); editingCard=nc.id; save(); renderAll();
       setTimeout(()=>{ const n=document.querySelector(`[data-cname="${nc.id}"]`); if(n){ n.scrollIntoView({block:'center'}); n.focus({preventScroll:true}); n.select(); } },60); break; }
+    case 'welcomeDone': state.settings.welcomed = true; save(); renderWelcome(); break;
     case 'syncOn': enableSync(); break;
     case 'syncNow': runSync(); break;
     case 'syncOff': if(await ask('Turn off sync on this device? Your data stays here and on your other devices.', [{label:'Turn off', cls:'danger'},{label:'Cancel', cls:'ghost'}])===0){
@@ -1062,6 +1122,7 @@ async function keepLocally(){ lastRec = recordsOf(state); clearTimeout(saveTimer
   try{ await store.set(KEY, JSON.stringify(state)); }catch(e){ console.error(e); } }
 function applyMerged(merged){
   state = merged;
+  viewPay = payFor(viewPay);   // the payday schedule may have just arrived from another device: line the screen up with it
   if(editingId && !state.expenses.some(x => x.id === editingId)) resetForm();
   keepLocally(); renderMethodChips(); refreshForm(); syncSettings(); refresh();
 }
@@ -1112,7 +1173,7 @@ function renderSyncBox(){
     return;
   }
   setLive('syncBox', `<p class="hint" style="margin:0 0 10px;">Log on your phone and it shows on your laptop, and the other way round. Your data is encrypted with your passphrase before it leaves this device, and stored in a private file on your own GitHub.</p>
-    ${onGitHub ? '' : '<div class="sync-err" style="margin:0 0 10px;">Sync works when you open the app from your GitHub link (gunshi94.github.io/Financial).</div>'}
+    ${onGitHub ? '' : '<div class="sync-err" style="margin:0 0 10px;">Sync works when you open the app from its GitHub link, not from a preview.</div>'}
     <details class="more"><summary>How to make your GitHub key</summary><ol class="sync-steps">
       <li>On GitHub: your photo → <b>Settings</b> → <b>Developer settings</b> → <b>Personal access tokens</b> → <b>Tokens (classic)</b></li>
       <li><b>Generate new token (classic)</b>. Note: "Financial sync". Expiration: <b>No expiration</b> (or a year)</li>
@@ -1168,14 +1229,9 @@ async function enableSync(){
 }
 
 // ===================== first run =====================
-// Pre-set with what's already known; everything here can be changed in the app.
+// A new user starts blank: 50/30/20, paid every 14 days from today, no cards or goals yet.
 function starter(){
-  return normalize({
-    settings:{ need:50, want:30, save:20, anchor:'2026-10-23', every:14 },
-    cards:[ {id:'ub', name:'UnionBank', close:15, due:19, start:0, payNeed:false},
-            {id:'bpi', name:'BPI', close:20, due:21, start:0, payNeed:true} ],
-    goals:[ {id:'room', name:'Room Repair', target:100000, accounts:[{id:'bpiacct', name:'BPI', amount:54000},{id:'gotyme', name:'GoTyme', amount:0}]} ]
-  });
+  return normalize({ settings:{ need:50, want:30, save:20, anchor:today(), every:14 } });
 }
 
 // ===================== start =====================
