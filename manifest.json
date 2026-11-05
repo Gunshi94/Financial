@@ -1,6 +1,6 @@
 {
-  "name": "Budget & CC Tracker",
-  "short_name": "Budget & CC",
+  "name": "Financial",
+  "short_name": "Financial",
   "description": "50/30/20 budget with credit card bill cycles",
   "start_url": "./",
   "scope": "./",
