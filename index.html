@@ -50,7 +50,7 @@
   .hint{font-size:.76rem; color:var(--ink-soft); line-height:1.5; margin:8px 0 0;}
   .card{background:var(--surface); border:1.5px solid var(--border); border-radius:14px; padding:14px; margin-bottom:12px;}
   .cardhead{display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;}
-  input[type=text], input[type=number], input[type=date], select, textarea{
+  input[type=text], input[type=password], input[type=number], input[type=date], select, textarea{
     width:100%; height:46px; padding:0 12px; font-size:16px; font-family:var(--sans); color:var(--ink);
     background:var(--surface); border:1.5px solid var(--rule); border-radius:10px; appearance:none; -webkit-appearance:none; min-width:0;}
   input[type=number]{font-family:var(--mono); text-align:right; -moz-appearance:textfield;}
@@ -174,6 +174,11 @@
   nav.bottom button{height:var(--nav-h); border:none; background:transparent; color:var(--ink-soft); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; font-size:.64rem; font-weight:600;}
   nav.bottom svg{width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round;}
   nav.bottom button.active{color:var(--green);}
+  #syncTag:empty{display:none;} #syncTag.err{color:#F2A58F; opacity:1;}
+  .sync-steps{font-size:.8rem; line-height:1.6; margin:6px 0 0; padding-left:20px;}
+  .sync-steps li{margin-bottom:4px;}
+  .sync-ok{background:var(--green-soft); border-radius:10px; padding:10px 12px; font-size:.84rem; line-height:1.5;}
+  .sync-err{background:var(--red-soft); color:var(--red); border-radius:10px; padding:10px 12px; font-size:.84rem; font-weight:600; margin-top:10px;}
   .toast{position:fixed; left:50%; transform:translate(-50%,20px); bottom:calc(var(--nav-h) + env(safe-area-inset-bottom) + 14px);
     background:var(--ink-bg); color:var(--on-dark); padding:11px 16px; border-radius:24px; font-size:.84rem; z-index:50;
     display:flex; gap:12px; align-items:center; opacity:0; pointer-events:none; transition:.25s; max-width:92vw;}
@@ -210,7 +215,7 @@
 <body>
 <div class="topbar">
   <h1>Financial</h1>
-  <div class="right"><span class="saved" id="savedTag">Loading…</span><button id="themeBtn" aria-label="Theme">🌓</button></div>
+  <div class="right"><span class="saved" id="syncTag"></span><span class="saved" id="savedTag">Loading…</span><button id="themeBtn" aria-label="Theme">🌓</button></div>
 </div>
 
 <nav class="bottom" aria-label="Main">
@@ -340,6 +345,7 @@
         </div>
       </div>
       <div>
+        <div class="card" id="syncCard"><h2 style="margin-bottom:8px;">Sync between devices</h2><div id="syncBox"></div></div>
         <div class="card">
           <h2 style="margin-bottom:6px;">Backup &amp; restore</h2>
           <div class="inline" style="margin:8px 0 10px;"><button class="btn ghost" style="flex:1;" data-action="showBackup">Show backup</button><button class="btn ghost" style="flex:1;" data-action="copyBackup">Copy</button></div>
@@ -417,16 +423,30 @@ function normalize(s){
       months, monthly: months>0 && num(e.monthly)>0 ? r2(num(e.monthly)) : null };
   });
   const sv = (s&&s.savings)||{};
-  o.savings = { balance:r2(num(sv.balance)), log:(Array.isArray(sv.log)?sv.log:[]).filter(e=>e&&isFinite(num(e.amount))).map(e=>({id:String(e.id||uid()), date:isoOk(e.date)?e.date:today(), amount:r2(num(e.amount)), note:String(e.note||''), opening:!!e.opening, ref:e.ref||null})) };
+  o.savings = { adj:sv.adj, balance:r2(num(sv.balance)), log:(Array.isArray(sv.log)?sv.log:[]).filter(e=>e&&isFinite(num(e.amount))).map(e=>({id:String(e.id||uid()), date:isoOk(e.date)?e.date:today(), amount:r2(num(e.amount)), note:String(e.note||''), opening:!!e.opening, ref:e.ref||null})) };
   o.goals = ((s&&s.goals)||[]).filter(Boolean).map(g => ({ id:String(g.id||uid()), name:String(g.name||'Goal'), target:r2(num(g.target)),
-    accounts:(Array.isArray(g.accounts)&&g.accounts.length?g.accounts:[{name:'Savings',amount:0}]).map(a=>({id:String(a.id||uid()), name:String(a.name||'Account'), amount:r2(num(a.amount))})) }));
+    accounts:(Array.isArray(g.accounts)&&g.accounts.length?g.accounts:[{name:'Savings',amount:0}]).map(a=>({id:String(a.id||uid()), name:String(a.name||'Account'), amount:r2(num(a.amount)), adj:a.adj})) }));
   o.goalLog = ((s&&s.goalLog)||[]).filter(e=>e&&isoOk(e.date)).map(e=>({id:String(e.id||uid()), date:e.date, goalId:String(e.goalId), acctId:String(e.acctId), amount:r2(num(e.amount)), note:String(e.note||'')}));
   o.stmtChecks = {}; Object.entries((s&&s.stmtChecks)||{}).forEach(([k,v]) => { if(/^.+\|\d{4}-\d{2}-\d{2}$/.test(k) && num(v)>0) o.stmtChecks[k]=r2(num(v)); });
   delete o.bills;
+  // Balances are a starting amount plus their entries, so deposits made on two devices add up instead of overwriting.
+  { const logSum = o.savings.log.reduce((t,e)=>t+e.amount,0);
+    o.savings.adj = (o.savings.adj!=null && isFinite(num(o.savings.adj))) ? r2(num(o.savings.adj)) : r2(o.savings.balance - logSum); }
+  for(const g of o.goals) for(const a of g.accounts){
+    const ls = o.goalLog.filter(e=>e.goalId===g.id && e.acctId===a.id).reduce((t,e)=>t+e.amount,0);
+    a.adj = (a.adj!=null && isFinite(num(a.adj))) ? r2(num(a.adj)) : r2(a.amount - ls); }
+  // when each record last changed, and what was deleted (used only for syncing)
+  const mt = (s&&s.meta)||{}; o.meta = {t:{}, del:{}};
+  for(const k of ['t','del']) Object.entries(mt[k]||{}).forEach(([key,v]) => { if(isFinite(Number(v))) o.meta[k][key]=Number(v); });
+  recalcOf(o);
   return o;
 }
+function recalcOf(s){
+  s.savings.balance = r2(num(s.savings.adj) + s.savings.log.reduce((t,e)=>t+e.amount,0));
+  for(const g of s.goals) for(const a of g.accounts) a.amount = r2(num(a.adj) + s.goalLog.filter(e=>e.goalId===g.id && e.acctId===a.id).reduce((t,e)=>t+e.amount,0));
+}
 let state = defaults(), saveTimer = null;
-function save(){ clearTimeout(saveTimer); setText('savedTag','Saving…');
+function save(){ recalcOf(state); stamp(); queueSync(); clearTimeout(saveTimer); setText('savedTag','Saving…');
   saveTimer = setTimeout(async () => { saveTimer=null;
     try{ await store.set(KEY, JSON.stringify(state)); setText('savedTag','Saved ' + new Date().toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'})); }
     catch(e){ console.error(e); setText('savedTag','Not saved'); } }, 300); }
@@ -806,7 +826,7 @@ $('savOut').addEventListener('click', () => savManual(-1));
 function savManual(sign){ const v=r2(num($('savAmt').value)); if(!(v>0)){ toast('Enter an amount above ₱0.'); return; }
   savEntry(sign*v, $('savNote').value.trim() || (sign>0?'Added':'Taken out')); $('savAmt').value=''; $('savNote').value='';
   save(); refresh(); toast(`${sign>0?'Added':'Took out'} ${fmt(v)}`); }
-$('savBalance').addEventListener('input', e => { state.savings.balance = r2(num(e.target.value)); save(); renderSavings(); });
+$('savBalance').addEventListener('input', e => { state.savings.adj = r2(num(e.target.value) - state.savings.log.reduce((t,x)=>t+x.amount,0)); save(); renderSavings(); });
 
 function applySettings(){ const st=S();
   st.need=Math.min(100,Math.max(0,num($('sNeed').value))); st.want=Math.min(100,Math.max(0,num($('sWant').value))); st.save=Math.min(100,Math.max(0,num($('sSave').value)));
@@ -828,7 +848,7 @@ document.addEventListener('input', e => {
   else if(d.gname){ const x=g(d.gname); if(x){ x.name=t.value.trim()||x.name; save(); } }
   else if(d.gtarget){ const x=g(d.gtarget); if(x){ x.target=r2(num(t.value)); save(); } }
   else if(d.aname){ const [gi,ai]=d.aname.split(':'), x=g(gi), a=x&&x.accounts.find(z=>z.id===ai); if(a){ a.name=t.value.trim()||a.name; save(); } }
-  else if(d.aamt){ const [gi,ai]=d.aamt.split(':'), x=g(gi), a=x&&x.accounts.find(z=>z.id===ai); if(a){ a.amount=r2(num(t.value)); save(); } }
+  else if(d.aamt){ const [gi,ai]=d.aamt.split(':'), x=g(gi), a=x&&x.accounts.find(z=>z.id===ai); if(a){ a.adj = r2(num(t.value) - state.goalLog.filter(e=>e.goalId===x.id && e.acctId===a.id).reduce((s2,e)=>s2+e.amount,0)); save(); } }
 });
 document.addEventListener('change', e => { const t=e.target, d=t.dataset||{};
   if(d.cneed){ const c=cardById(d.cneed); if(c){ c.payNeed=t.checked; save(); refresh(); } }
@@ -887,7 +907,7 @@ document.addEventListener('click', async e => {
     save(); refresh(); toast('Entry removed','Undo',()=>{ state.goalLog.splice(i,0,ent); if(a) a.amount=r2(a.amount+ent.amount); save(); refresh(); }); return; }
   if(d.goaledit){ editingGoal=d.goaledit; renderGoals(); return; }
   if(d.goaldone){ editingGoal=null; refresh(); return; }
-  if(d.aadd){ const g=state.goals.find(x=>x.id===d.aadd); if(!g) return; g.accounts.push({id:uid(), name:'New account', amount:0}); save(); renderGoals(); return; }
+  if(d.aadd){ const g=state.goals.find(x=>x.id===d.aadd); if(!g) return; g.accounts.push({id:uid(), name:'New account', amount:0, adj:0}); save(); renderGoals(); return; }
   if(d.adel){ const [gi,ai]=d.adel.split(':'), g=state.goals.find(x=>x.id===gi); if(!g||g.accounts.length<2) return; const a=g.accounts.find(x=>x.id===ai);
     if(await ask(`Remove ${a.name} from ${g.name}? Its ${fmt(a.amount)} won't count toward the goal anymore.`, [{label:'Remove', cls:'danger'},{label:'Cancel', cls:'ghost'}])!==0) return;
     g.accounts=g.accounts.filter(x=>x.id!==ai); state.goalLog=state.goalLog.filter(x=>!(x.goalId===gi && x.acctId===ai)); save(); renderGoals(); return; }
@@ -904,7 +924,11 @@ document.addEventListener('click', async e => {
       setTimeout(()=>{ const n=document.querySelector(`[data-gname="${g.id}"]`); if(n){ n.focus(); n.select(); } },50); break; }
     case 'addCard': { const nc={id:uid(), name:'New card', close:15, due:19, start:0, payNeed:false}; state.cards.push(nc); editingCard=nc.id; save(); renderAll();
       setTimeout(()=>{ const n=document.querySelector(`[data-cname="${nc.id}"]`); if(n){ n.scrollIntoView({block:'center'}); n.focus({preventScroll:true}); n.select(); } },60); break; }
-    case 'clearAll': if(await ask('Clear all your entries? Settings, cards and goal names stay. This can\'t be undone.', [{label:'Clear everything', cls:'danger'},{label:'Cancel', cls:'ghost'}])===0){
+    case 'syncOn': enableSync(); break;
+    case 'syncNow': runSync(); break;
+    case 'syncOff': if(await ask('Turn off sync on this device? Your data stays here and on your other devices.', [{label:'Turn off', cls:'danger'},{label:'Cancel', cls:'ghost'}])===0){
+        sync = null; try{ localStorage.removeItem(SYNC_KEY); }catch(_){} clearTimeout(syncTimer); setSyncStatus('off'); toast('Sync turned off on this device.'); } break;
+    case 'clearAll': if(await ask('Clear all your entries? Settings, cards and goal names stay. This can\'t be undone.' + (sync ? ' Sync is on, so this also clears them on your other devices.' : ''), [{label:'Clear everything', cls:'danger'},{label:'Cancel', cls:'ghost'}])===0){
         const keep = { settings: state.settings, cards: state.cards.map(x=>({...x, start:0})), goals: state.goals.map(g=>({...g, accounts:g.accounts.map(a=>({...a, amount:0}))})) };
         state = normalize(keep); save(); viewPay=curPay(); formMethod=null; resetForm(); renderAll(); showTab('home'); toast('Cleared. Fresh start.'); } break;
     case 'showBackup': { const b=$('backupBox'); b.value=JSON.stringify(state); b.focus(); b.select(); break; }
@@ -914,7 +938,7 @@ document.addEventListener('click', async e => {
     case 'restoreBackup': { const raw=$('backupBox').value.trim(); if(!raw){ toast('Paste your backup text first'); return; }
       let p; try{ p=JSON.parse(raw); }catch(_){ toast("That doesn't look like a valid backup"); return; }
       if(!p || typeof p!=='object' || !p.settings || !Array.isArray(p.expenses)){ toast("That doesn't look like a backup from this tracker"); return; }
-      if(await ask('Replace everything here with the pasted backup?', [{label:'Restore', cls:'danger'},{label:'Cancel', cls:'ghost'}])===0){ state=normalize(p); save(); viewPay=curPay(); formMethod=null; resetForm(); renderAll(); $('backupBox').value=''; showTab('home'); toast('Backup restored'); } break; }
+      if(await ask('Replace everything here with the pasted backup?' + (sync ? ' Sync is on, so your other devices will get it too.' : ''), [{label:'Restore', cls:'danger'},{label:'Cancel', cls:'ghost'}])===0){ state=normalize(p); save(); viewPay=curPay(); formMethod=null; resetForm(); renderAll(); $('backupBox').value=''; showTab('home'); toast('Backup restored'); } break; }
   }
 });
 
@@ -943,6 +967,206 @@ document.addEventListener('visibilitychange', () => { if(document.visibilityStat
 window.addEventListener('focus', dayCheck);
 setInterval(dayCheck, 60000);
 
+// ===================== sync (encrypted, through your own GitHub) =====================
+// Your data is encrypted on this device with your passphrase (AES-256-GCM, key from PBKDF2) and kept in one
+// secret gist on your GitHub. Each record carries the time it last changed; when devices differ, the newest
+// version of each record wins and deletions carry over.
+let API = 'https://api.github.com';
+const SYNC_KEY = 'financial:sync', GIST_DESC = 'Financial tracker sync (encrypted)', GIST_FILE = 'financial-sync.json';
+let sync = null; try{ sync = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null'); }catch(_){ sync = null; }
+let syncBusy = false, syncAgain = false, syncTimer = null, lastSyncAt = null, syncState = 'off', syncDetail = '', lastRec = null;
+
+function recordsOf(s){
+  const r = new Map();
+  r.set('set', JSON.stringify(s.settings));
+  r.set('sadj', JSON.stringify({adj:num(s.savings.adj)}));
+  for(const c of s.cards) r.set('card:'+c.id, JSON.stringify(c));
+  for(const d of Object.keys(s.paydays).sort()) r.set('pay:'+d, JSON.stringify(s.paydays[d]));
+  for(const e of s.expenses) r.set('exp:'+e.id, JSON.stringify(e));
+  for(const p of s.cardPays) r.set('cp:'+p.id, JSON.stringify(p));
+  for(const e of s.savings.log) r.set('sl:'+e.id, JSON.stringify(e));
+  for(const g of s.goals) r.set('goal:'+g.id, JSON.stringify({id:g.id, name:g.name, target:g.target, accounts:g.accounts.map(a=>({id:a.id, name:a.name, adj:num(a.adj)}))}));
+  for(const e of s.goalLog) r.set('gl:'+e.id, JSON.stringify(e));
+  for(const k of Object.keys(s.stmtChecks).sort()) r.set('chk:'+k, JSON.stringify(s.stmtChecks[k]));
+  return r;
+}
+function fromRecords(map, meta){
+  const s = {settings:{}, paydays:{}, cards:[], cardPays:[], expenses:[], savings:{adj:0, log:[]}, goals:[], goalLog:[], stmtChecks:{}, meta};
+  for(const [k, j] of map){ const v = JSON.parse(j), i = k.indexOf(':'), type = i<0 ? k : k.slice(0,i), id = i<0 ? '' : k.slice(i+1);
+    if(type==='set') s.settings = v; else if(type==='sadj') s.savings.adj = v.adj; else if(type==='card') s.cards.push(v);
+    else if(type==='pay') s.paydays[id] = v; else if(type==='exp') s.expenses.push(v); else if(type==='cp') s.cardPays.push(v);
+    else if(type==='sl') s.savings.log.push(v); else if(type==='goal') s.goals.push({...v, accounts:v.accounts.map(a=>({...a, amount:0}))});
+    else if(type==='gl') s.goalLog.push(v); else if(type==='chk') s.stmtChecks[id] = v; }
+  return normalize(s);
+}
+// mark what changed since the last save (and what was deleted), so the newest version wins when devices meet
+function stamp(){
+  const now = Date.now(), rec = recordsOf(state), m = state.meta || (state.meta = {t:{}, del:{}});
+  if(!lastRec){ lastRec = rec; return; }
+  for(const [k, v] of rec) if(lastRec.get(k) !== v){ m.t[k] = now; delete m.del[k]; }
+  for(const k of lastRec.keys()) if(!rec.has(k)){ m.del[k] = now; delete m.t[k]; }
+  lastRec = rec;
+}
+// Combine two copies record by record. On an exact tie the synced copy wins, so a fresh device never
+// overwrites your real data with its blank starting values.
+function mergeStates(local, remote){
+  const lr = recordsOf(local), rr = recordsOf(remote), lm = local.meta || {t:{},del:{}}, rm = remote.meta || {t:{},del:{}};
+  const keys = [...new Set([...lr.keys(), ...rr.keys(), ...Object.keys(lm.del), ...Object.keys(rm.del)])];
+  const out = new Map(), meta = {t:{}, del:{}};
+  for(const k of keys){
+    const opts = [];
+    if(rr.has(k)) opts.push({rec:rr.get(k), at:rm.t[k]||0, side:0});
+    if(lr.has(k)) opts.push({rec:lr.get(k), at:lm.t[k]||0, side:1});
+    if(rm.del[k] != null) opts.push({rec:null, at:rm.del[k], side:0});
+    if(lm.del[k] != null) opts.push({rec:null, at:lm.del[k], side:1});
+    opts.sort((a,b) => (b.at - a.at) || ((a.rec===null) - (b.rec===null)) || (a.side - b.side));
+    const w = opts[0];
+    if(w.rec !== null){ out.set(k, w.rec); meta.t[k] = w.at; } else meta.del[k] = w.at;
+  }
+  return fromRecords(out, meta);
+}
+const sigOf = s => JSON.stringify([[...recordsOf(s)].sort(), Object.entries(s.meta.del).sort()]);
+
+// ---- encryption ----
+function toB64(buf){ const u = new Uint8Array(buf); let s = ''; for(let i=0;i<u.length;i+=0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i+0x8000)); return btoa(s); }
+function fromB64(s){ const b = atob(s), u = new Uint8Array(b.length); for(let i=0;i<b.length;i++) u[i] = b.charCodeAt(i); return u; }
+async function deriveKey(pass, saltB64){
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveBits']);
+  return toB64(await crypto.subtle.deriveBits({name:'PBKDF2', salt:fromB64(saltB64), iterations:250000, hash:'SHA-256'}, base, 256));
+}
+const aesKey = raw => crypto.subtle.importKey('raw', fromB64(raw), 'AES-GCM', false, ['encrypt','decrypt']);
+async function encryptState(obj, raw){ const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, await aesKey(raw), new TextEncoder().encode(JSON.stringify(obj)));
+  return {iv:toB64(iv), data:toB64(ct)}; }
+async function decryptState(env, raw){ const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv:fromB64(env.iv)}, await aesKey(raw), fromB64(env.data));
+  return JSON.parse(new TextDecoder().decode(pt)); }
+
+// ---- GitHub ----
+async function gh(path, opts={}, token=(sync && sync.token)){
+  const r = await fetch(API + path, {...opts, cache:'no-store', headers:{'Accept':'application/vnd.github+json', 'Authorization':'Bearer '+token, ...(opts.body ? {'Content-Type':'application/json'} : {})}});
+  if(!r.ok){ const e = new Error('GitHub replied ' + r.status); e.status = r.status; throw e; }
+  return r.status === 204 ? null : r.json();
+}
+async function readEnvelope(id, token){
+  const g = await gh('/gists/' + id, {}, token), f = g.files && g.files[GIST_FILE];
+  if(!f){ const e = new Error('Sync file not found'); e.status = 404; throw e; }
+  let text = f.content; if(f.truncated){ text = await (await fetch(f.raw_url, {cache:'no-store'})).text(); }
+  return JSON.parse(text);
+}
+async function writeEnvelope(s){
+  const env = {app:'financial', v:1, salt:sync.salt, ...(await encryptState(s, sync.key)), at:new Date().toISOString()};
+  await gh('/gists/' + sync.gistId, {method:'PATCH', body:JSON.stringify({files:{[GIST_FILE]:{content:JSON.stringify(env)}}})});
+}
+// keep the merged copy on this device without marking anything as newly changed
+async function keepLocally(){ lastRec = recordsOf(state); clearTimeout(saveTimer); saveTimer = null;
+  try{ await store.set(KEY, JSON.stringify(state)); }catch(e){ console.error(e); } }
+function applyMerged(merged){
+  state = merged;
+  if(editingId && !state.expenses.some(x => x.id === editingId)) resetForm();
+  keepLocally(); renderMethodChips(); refreshForm(); syncSettings(); refresh();
+}
+
+function queueSync(delay=2500){ if(!sync) return; clearTimeout(syncTimer); syncTimer = setTimeout(runSync, delay); }
+async function runSync(){
+  if(!sync) return;
+  if(syncBusy){ syncAgain = true; return; }
+  syncBusy = true; setSyncStatus('busy');
+  try{
+    // Read, combine, write, then read back: if another device wrote at the same moment, combine again,
+    // so two devices coming online together can't overwrite each other's entries.
+    for(let round = 0; round < 4; round++){
+      const env = await readEnvelope(sync.gistId);
+      const remote = env && env.data ? normalize(await decryptState(env, sync.key)) : null;
+      const merged = remote ? mergeStates(state, remote) : state;     // against what's on screen right now
+      if(remote && sigOf(merged) !== sigOf(state)) applyMerged(merged);
+      if(remote && sigOf(merged) === sigOf(remote)) break;            // GitHub already has everything
+      await writeEnvelope(merged);
+    }
+    lastSyncAt = Date.now(); setSyncStatus('ok');
+  }catch(e){
+    console.warn('sync', e);
+    if(e.status === 401) setSyncStatus('error', 'Your GitHub key stopped working. It may have expired. Make a new one and turn sync on again.');
+    else if(e.status === 404) setSyncStatus('error', 'The sync file on GitHub is missing. Turn sync off and on again on this device.');
+    else if(e.name === 'OperationError') setSyncStatus('error', 'The passphrase saved on this device no longer matches. Turn sync off and on again.');
+    else setSyncStatus('offline');
+  }finally{ syncBusy = false; if(syncAgain){ syncAgain = false; queueSync(400); } }
+}
+function setSyncStatus(s, detail=''){
+  syncState = s; syncDetail = detail;
+  const el = $('syncTag');
+  if(el){ el.className = 'saved' + (s==='error' ? ' err' : ''); el.textContent = !sync ? '' : s==='ok' ? '☁ Synced' : s==='busy' ? '☁ Syncing…' : s==='offline' ? '☁ Offline' : '⚠ Sync problem'; el.title = detail; }
+  renderSyncBox();
+}
+document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible') runSync(); });
+window.addEventListener('online', () => runSync());
+setInterval(() => { if(sync && document.visibilityState === 'visible') runSync(); }, 60000);
+
+function renderSyncBox(){
+  const onGitHub = /github\.io$/.test(location.hostname) || /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+  if(sync){
+    setLive('syncBox', `<div class="sync-ok">Sync is <b>on</b>${sync.login ? ` with <b>${esc(sync.login)}</b>` : ''}.<br>
+        ${syncState==='ok' && lastSyncAt ? `Last synced at ${new Date(lastSyncAt).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'})}.` : syncState==='busy' ? 'Syncing…' : syncState==='offline' ? 'Offline right now. Your entries are saved here and will sync when you\'re back online.' : ''}</div>
+      ${syncState==='error' ? `<div class="sync-err">${esc(syncDetail)}</div>` : ''}
+      <div class="inline" style="margin-top:10px;"><button class="btn ghost" style="flex:1;" data-action="syncNow">Sync now</button><button class="btn out" data-action="syncOff">Turn off here</button></div>
+      <p class="hint">Your GitHub key and passphrase are kept only on this device. Keep your passphrase somewhere safe: without it your synced data can't be opened.</p>`);
+    return;
+  }
+  setLive('syncBox', `<p class="hint" style="margin:0 0 10px;">Log on your phone and it shows on your laptop, and the other way round. Your data is encrypted with your passphrase before it leaves this device, and stored in a private file on your own GitHub.</p>
+    ${onGitHub ? '' : '<div class="sync-err" style="margin:0 0 10px;">Sync works when you open the app from your GitHub link (gunshi94.github.io/Financial).</div>'}
+    <details class="more"><summary>How to make your GitHub key</summary><ol class="sync-steps">
+      <li>On GitHub: your photo → <b>Settings</b> → <b>Developer settings</b> → <b>Personal access tokens</b> → <b>Tokens (classic)</b></li>
+      <li><b>Generate new token (classic)</b>. Note: "Financial sync". Expiration: <b>No expiration</b> (or a year)</li>
+      <li>Tick <b>only</b> the <b>gist</b> box, then <b>Generate token</b> and copy it</li></ol></details>
+    <div class="stack" style="margin-top:10px;">
+      <label class="f">GitHub key<input type="password" id="syncToken" autocomplete="off" placeholder="ghp_…"></label>
+      <label class="f">Passphrase (at least 8 characters)<input type="password" id="syncPass" autocomplete="new-password"></label>
+      <label class="f">Passphrase again<input type="password" id="syncPass2" autocomplete="new-password"></label>
+    </div>
+    <p class="hint">Use the <b>same passphrase on every device</b>.</p>
+    <button class="btn green block" style="margin-top:10px;" data-action="syncOn">Turn on sync</button>
+    <div id="syncMsg"></div>`);
+}
+function syncMsg(t, bad=true){ const el = $('syncMsg'); if(el) el.innerHTML = t ? `<div class="${bad?'sync-err':'sync-ok'}" style="margin-top:10px;">${t}</div>` : ''; }
+const hasEntries = s => s.expenses.length || s.cardPays.length || s.savings.log.length || s.goalLog.length || Object.keys(s.paydays).length;
+async function enableSync(){
+  const token = $('syncToken').value.trim(), pass = $('syncPass').value, pass2 = $('syncPass2').value;
+  if(!token){ syncMsg('Paste your GitHub key first.'); return; }
+  if(pass.length < 8){ syncMsg('Use a passphrase of at least 8 characters.'); return; }
+  if(pass !== pass2){ syncMsg('The two passphrases don\'t match.'); return; }
+  syncMsg('Connecting to GitHub…', false);
+  let user;
+  try{ user = await gh('/user', {}, token); }
+  catch(e){ syncMsg(e.status===401 ? 'That GitHub key didn\'t work. Check you copied all of it and that it has the <b>gist</b> permission.' : 'Couldn\'t reach GitHub. Check your internet connection and try again.'); return; }
+  try{
+    const gists = await gh('/gists?per_page=100', {}, token);
+    const found = gists.find(g => g.description === GIST_DESC && g.files && g.files[GIST_FILE]);
+    if(found){
+      // another device already set up sync: unlock it with the same passphrase, then combine
+      const env = await readEnvelope(found.id, token), key = await deriveKey(pass, env.salt);
+      let remote; try{ remote = normalize(await decryptState(env, key)); }
+      catch(_){ syncMsg('That passphrase doesn\'t match the one you used on your other device.'); return; }
+      let replace = false;
+      if(hasEntries(state)){
+        const ch = await ask('This device already has entries of its own. What should happen to them?',
+          [{label:'Combine them with my synced data', cls:'green'}, {label:'Replace them with my synced data', cls:'ghost'}, {label:'Cancel', cls:'ghost'}]);
+        if(ch === 2){ syncMsg(''); return; } replace = ch === 1;
+      }
+      sync = {token, gistId:found.id, salt:env.salt, key, login:user.login};
+      localStorage.setItem(SYNC_KEY, JSON.stringify(sync));
+      if(replace) applyMerged(remote);
+      await runSync(); toast('Sync is on.');
+    } else {
+      // first device: create the private, encrypted sync file
+      const salt = toB64(crypto.getRandomValues(new Uint8Array(16))), key = await deriveKey(pass, salt);
+      const env = {app:'financial', v:1, salt, ...(await encryptState(state, key)), at:new Date().toISOString()};
+      const g = await gh('/gists', {method:'POST', body:JSON.stringify({description:GIST_DESC, public:false, files:{[GIST_FILE]:{content:JSON.stringify(env)}}})}, token);
+      sync = {token, gistId:g.id, salt, key, login:user.login};
+      localStorage.setItem(SYNC_KEY, JSON.stringify(sync));
+      lastSyncAt = Date.now(); setSyncStatus('ok'); toast('Sync is on. Now turn it on on your other device with the same passphrase.');
+    }
+  }catch(e){ console.warn(e); syncMsg('Something went wrong talking to GitHub. Please try again.'); }
+}
+
 // ===================== first run =====================
 // Pre-set with what's already known; everything here can be changed in the app.
 function starter(){
@@ -957,8 +1181,9 @@ function starter(){
 // ===================== start =====================
 async function load(){
   let loaded=null; try{ const r=await store.get(KEY); if(r&&r.value) loaded=JSON.parse(r.value); }catch(e){}
-  if(loaded) state=normalize(loaded); else { state=starter(); save(); }
-  viewPay=curPay(); setText('savedTag','Ready'); resetForm(); renderAll();
+  if(loaded){ state=normalize(loaded); lastRec = recordsOf(state); } else { state=starter(); lastRec = recordsOf(state); save(); }
+  viewPay=curPay(); setText('savedTag','Ready'); resetForm(); renderAll(); renderSyncBox(); setSyncStatus(sync ? 'busy' : 'off');
+  if(sync) runSync();
 }
 load();
 if('serviceWorker' in navigator){
