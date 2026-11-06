@@ -1,6 +1,6 @@
 // Service worker for the Budget & CC Tracker.
 // Network-first so updates show right away; the cache is the offline fallback.
-const CACHE = 'budgetcc-v8';
+const CACHE = 'budgetcc-v9';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(k => Promise.all(k.filter(x => x !== CACHE).map(x => caches.delete(x)))).then(() => self.clients.claim())); });

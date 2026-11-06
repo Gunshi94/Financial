@@ -186,6 +186,22 @@
   .editnote{background:var(--gold-soft); color:var(--ink); border-radius:10px; padding:9px 11px; font-size:.82rem; line-height:1.45; margin:-4px 0 12px;}
   .row.editing-row{background:var(--gold-soft); border-radius:10px; padding-left:8px; padding-right:8px;}
   .tag.editing-tag{background:var(--gold); color:#fff;}
+  .phead{display:flex; justify-content:space-between; align-items:baseline; gap:8px;}
+  .bsec{background:var(--surface); border-radius:10px; padding:10px 12px; margin-top:10px;}
+  .blbl{font-size:.66rem; text-transform:uppercase; letter-spacing:.6px; font-weight:700; color:var(--ink-soft);}
+  .bbig{font-size:1.55rem; font-weight:600; margin:2px 0 6px;}
+  .bhead{display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:6px; flex-wrap:wrap;}
+  .bstat{font-size:.82rem; font-weight:700;}
+  .bstat.ok{color:var(--green);} .bstat.warn, .bstat.pending{color:var(--gold);} .bstat.over{color:var(--red);}
+  .dim{color:var(--ink-soft);}
+  .mdot{display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; vertical-align:0;}
+  .mdot + .mdot{margin-left:-4px;}
+  .oth{background:var(--paper); border:1px dashed var(--slate); border-radius:8px; padding:6px 8px; margin-top:6px;}
+  .oth .bl{padding:2px 0;}
+  .bsec .bl{font-size:.84rem; padding:3px 0; align-items:baseline;}
+  .bsec .bl > span:first-child{min-width:0; overflow-wrap:anywhere;}
+  .bsec .bl > span:last-child{flex:none;}
+  .othnote{font-size:.7rem; color:var(--ink-soft); margin-top:2px;}
   .theme-row{display:flex; gap:8px;}
   .theme-row button{flex:1; height:42px; border-radius:10px; border:1.5px solid var(--rule); background:var(--surface); color:var(--ink-soft); font-weight:600;}
   .theme-row button.on{background:var(--ink-bg); color:var(--on-dark); border-color:var(--ink-bg);}
@@ -758,14 +774,14 @@ function paydaysIn(start, end){ const out=[]; let p = payFor(start); if(p < star
 function baseStats(c, cl){
   const start = stmtStart(cl,c), end = cl, pays = paydaysIn(start, end);
   const budget = r2(pays.reduce((s,p)=>s+caps(p).want, 0)), missing = pays.filter(p => incomeOf(p) <= 0);
-  let mineWant=0, mineNeed=0, otherWant=0, inst=0; const list=[];
+  let mineWant=0, mineNeed=0, otherWant=0, inst=0; const list=[], otherBy={};
   for(const it of chargeItems()){
     if(it.c===c && it.cl===cl){ if(it.e.cat==='want') mineWant+=it.a; else mineNeed+=it.a; if(it.e.months>0) inst+=it.a; list.push(it); }
-    else if(it.e.cat==='want' && it.eff>=start && it.eff<=end) otherWant+=it.a;
+    else if(it.e.cat==='want' && it.eff>=start && it.eff<=end){ otherWant+=it.a; otherBy[it.e.method] = (otherBy[it.e.method]||0) + it.a; }
   }
   mineWant=r2(mineWant); mineNeed=r2(mineNeed); otherWant=r2(otherWant);
   const spent = r2(mineWant+otherWant);
-  return { start, end, due:stmtDue(cl,c), pays, missing, budget, mineWant, mineNeed, otherWant, spent, inst:r2(inst), total:r2(mineWant+mineNeed), left:r2(budget-spent), list };
+  return { start, end, due:stmtDue(cl,c), pays, missing, budget, mineWant, mineNeed, otherWant, otherBy, spent, inst:r2(inst), total:r2(mineWant+mineNeed), left:r2(budget-spent), list };
 }
 // Carry-over: non-essential budget a bill didn't use passes to the next bill (and an overspend passes on too).
 // It starts from the first bill you logged purchases on, so months you didn't log never pass on money that may not be there.
@@ -784,7 +800,7 @@ function cycleStats(c, cl){
 // what this bill passes on to the next one
 function carryOut(s){ return (s.left < 0 && s.missing.length) ? 0 : s.left; }
 function cycleLevel(s){
-  if(s.missing.length && s.left < 0) return {cls:'pending', amt:fmt(s.spent), lbl:'spent so far, add take-home pay to compare', pct:0};
+  if(s.missing.length && s.left < 0) return {cls:'pending', amt:fmt(s.spent), lbl:'spent · needs salary', pct:0};
   const avail = s.available ?? s.budget;
   const ratio = avail>0 ? s.spent/avail : (s.spent>0 ? Infinity : 0);
   const cls = ratio>1 ? 'over' : ratio>=0.8 ? 'warn' : '';
@@ -803,47 +819,59 @@ function reconText(c, cl){
   if(Math.abs(d) < .01) return {t:'✓ Matches what you logged.', bad:false};
   return d > 0 ? {t:`${fmt(d)} on the statement isn't logged here. A purchase may be missing.`, bad:true} : {t:`You logged ${fmt(-d)} more than the statement shows. Check for a duplicate.`, bad:true};
 }
+// One bill, in two clear parts: what you'll pay the bank, then how your non-essential budget is doing.
+function budgetStatus(s, role){
+  const ratio = s.available>0 ? s.spent/s.available : (s.spent>0 ? Infinity : 0);
+  if(s.missing.length && s.left < 0) return {cls:'pending', text:`Needs ${s.missing.map(shortWords).join(', ')} Salary`};
+  if(s.left < 0) return {cls:'over', text:`${fmt(-s.left)} over`};
+  const cls = ratio >= 0.8 ? 'warn' : 'ok';
+  if(role==='paying') return {cls, text:`${fmt(s.left)} unused`};
+  const sofar = s.missing.length ? ' so far' : '';   // a salary still to come: what's left of the salaries in so far
+  if(role==='now'){ const d = Math.max(1, daysBetween(today(), s.end)+1); return {cls, text:`${fmt(s.left)} left${sofar} · ${fmt(s.left/d)}/day`}; }
+  return {cls, text:`${fmt(s.left)} left${sofar}`};
+}
 function stmtPanel(c, role, cl){
-  const s = cycleStats(c, cl), lv = cycleLevel(s), t = today();
+  const s = cycleStats(c, cl), t = today(), st = budgetStatus(s, role);
   const line = (label, val, cls='') => `<div class="bl ${cls}"><span>${label}</span><span class="mono">${val}</span></div>`;
-  const figs = `<div class="breakdown">
-      ${line(s.pays.length ? `From ${s.pays.map(shortWords).join(' + ')} payday${s.pays.length>1?'s':''}` : 'No paydays in this bill', fmt(s.budget))}
-      ${s.carryIn !== 0 ? line('Carried over from previous non-essential budget', (s.carryIn>0?'+':'−') + fmt(Math.abs(s.carryIn)), s.carryIn>0 ? 'carry' : 'carry neg') : ''}
-      ${s.carryIn !== 0 ? line('<b>Available for this bill</b>', `<b>${fmt(s.available)}</b>`, 'total') : ''}
-      ${line('Non-essentials on this card', '−' + fmt(s.mineWant))}
-      ${s.otherWant>0 ? line('Non-essentials paid another way', '−' + fmt(s.otherWant)) : ''}
-    </div>
-    ${s.mineNeed>0 ? `<p class="hint">Essentials on card: ${fmt(s.mineNeed)} (from your Essentials budget)</p>` : ''}`;
+  const dot = m => `<span class="mdot" style="background:${methodColor(m)}"></span>`;
+  // the bill
+  const bill = `<div class="bsec"><div class="blbl">${role==='paying' ? 'Bill' : 'Bill so far'}</div>
+      <div class="bbig mono">${fmt(s.total)}</div>
+      ${line('<span class="dim">Non-essentials</span>', fmt(s.mineWant))}
+      ${s.mineNeed>0 ? line('<span class="dim">Essentials</span>', fmt(s.mineNeed)) : ''}</div>`;
+  // the budget: each salary, any carry-over, this card, then anything paid another way
+  const salaries = s.pays.map(p => incomeOf(p) > 0 ? line(`${shortWords(p)} salary`, fmt(caps(p).want)) : line(`<span class="dim">${shortWords(p)} salary</span>`, '<span class="dim">—</span>')).join('')
+    || line('<span class="dim">No paydays in this bill</span>', '');
+  const carry = s.carryIn !== 0 ? line('Carried over from previous non-essential budget', (s.carryIn>0?'+':'−') + fmt(Math.abs(s.carryIn)), s.carryIn>0 ? 'carry' : 'carry neg') : '';
+  const used = Object.entries(s.otherBy).sort((a,b)=>b[1]-a[1]).map(([m]) => m);
+  const names = used.slice(0,2).map(m => esc(methodLabel(m))).join(', ') + (used.length > 2 ? ` +${used.length-2}` : '');
+  const other = s.otherWant > 0 ? `<div class="oth">${line(`<span>${used.slice(0,3).map(dot).join('')}Paid with ${names}</span>`, '−' + fmt(s.otherWant))}
+      <div class="othnote">Not on this bill · same non-essential budget</div></div>` : '';
+  const budget = `<div class="bsec"><div class="bhead"><div class="blbl">Non-essential budget</div><div class="bstat ${st.cls}">${st.text}</div></div>
+      ${salaries}${carry}
+      ${s.carryIn !== 0 ? line('<b>Available</b>', `<b>${fmt(s.available)}</b>`, 'total') : ''}
+      ${line(`<span>${dot('card:'+c.id)}Spent on ${esc(c.name)}</span>`, '−' + fmt(s.mineWant))}
+      ${other}</div>`;
   let extra = '';
-  if(role==='now'){
-    const daysLeft = Math.max(1, daysBetween(t, cl)+1);
-    extra += `<div class="pace ${lv.cls}">${s.missing.length && s.left<0 ? 'Enter the take-home pay for every payday in this cycle to see your daily limit.'
-      : s.left<0 ? `You're <b>${fmt(-s.left)}</b> over. Anything else on the card this cycle comes from somewhere else.`
-      : `About <b>${fmt(s.left/daysLeft)}</b> a day for the next <b>${daysLeft}</b> day${daysLeft>1?'s':''}.`}</div>`;
-  }
   if(role==='paying'){
     const paid = paidSince(c, cl), rest = r2(s.total - paid), dd = daysBetween(t, s.due), rc = reconText(c, cl), passOn = carryOut(s);
     if(firstLoggedClose(c) && cl >= firstLoggedClose(c) && passOn !== 0)
-      extra += `<div class="bl carry ${passOn<0?'neg':''}" style="margin-top:8px;"><span>${passOn>0 ? 'Unused, carried to your next bill' : 'Overspend carried to your next bill'}</span><span class="mono">${passOn>0?'+':'−'}${fmt(Math.abs(passOn))}</span></div>`;
-    extra += `<div class="figs"><div><small>Statement total</small><b>${fmt(s.total)}</b></div><div><small>Paid since</small><b>${fmt(paid)}</b></div></div>
-      <div class="hint" style="font-weight:600;color:${rest<=.005?'var(--green)':dd<0?'var(--red)':'var(--gold)'};">${rest<=.005 ? '✓ Paid' : dd<0 ? `Past due since ${words(s.due)}` : `Due ${words(s.due)}${dd===0?' (today)':` (in ${dd} day${dd>1?'s':''})`}`}</div>
+      extra += `<div class="bl carry ${passOn<0?'neg':''}" style="margin-top:8px;"><span>${passOn>0 ? 'Carried to your next bill' : 'Overspend carried to your next bill'}</span><span class="mono">${passOn>0?'+':'−'}${fmt(Math.abs(passOn))}</span></div>`;
+    extra += `<div class="hint" style="font-weight:600;color:${rest<=.005?'var(--green)':dd<0?'var(--red)':'var(--gold)'};">${rest<=.005 ? '✓ Paid' : `${fmt(paid)} paid of ${fmt(s.total)} · ` + (dd<0 ? `past due since ${shortWords(s.due)}` : `due ${shortWords(s.due)}${dd===0?' (today)':` (in ${dd} day${dd>1?'s':''})`}`)}</div>
       <label class="lbl" style="margin-top:10px;">Statement balance from ${esc(c.name)} (optional)</label>
       <input type="number" inputmode="decimal" step="0.01" data-stmtchk="${esc(checkKey(c,cl))}" value="${state.stmtChecks[checkKey(c,cl)] ?? ''}" placeholder="Check against what you logged">
       <div class="recon ${rc.bad?'bad':''}" id="recon-${esc(c.id)}">${rc.t}</div>
       ${rest > .005 ? `<button class="btn green block" style="margin-top:10px;" data-payrest="${esc(checkKey(c,cl))}">Pay the rest · ${fmt(rest)}</button>` : ''}`;
   }
-  if(role==='next' && s.inst>0) extra += `<p class="hint">Already includes <b>${fmt(s.inst)}</b> of installments.</p>`;
-  const note = s.missing.length ? `<p class="hint">Still need take-home pay for: ${s.missing.map(shortWords).join(', ')}. Enter it on Home, using ◀ ▶ to pick the payday.</p>` : '';
-  const label = {paying:'Paying now', now:'Spending now', next:'Coming up'}[role];
-  return `<div class="pcard ${role==='now'?'now':''}"><div class="role">${label}</div>
-    <div class="range">${shortWords(s.start)} – ${words(cl)}</div>
-    <div class="sub">Statement ${shortWords(cl)} · due ${words(s.due)} · ${s.pays.length} payday${s.pays.length===1?'':'s'}${s.pays.length?' ('+s.pays.map(shortWords).join(', ')+')':''}</div>
-    <div class="left ${lv.cls}">${lv.amt}<small>${role==='paying' && s.left>=0 ? 'under budget, stays in savings' : lv.lbl}</small></div>
-    <div class="meter"><div class="fill ${lv.cls||'want'}" style="width:${lv.pct}%"></div></div>
-    ${figs}${note}${extra}
-    <details class="more"><summary>Purchases on this statement (${s.list.length})</summary>
+  if(role==='next' && s.inst>0) extra += `<p class="hint">Includes ${fmt(s.inst)} of installments.</p>`;
+  const label = {paying:'Last bill', now:'Now', next:'Next'}[role];
+  return `<div class="pcard ${role==='now'?'now':''}">
+    <div class="phead"><div class="role">${label} · ${shortWords(s.start)} – ${shortWords(cl)}</div><div class="sub">Due ${shortWords(s.due)}</div></div>
+    ${bill}${budget}${extra}
+    <details class="more"><summary>Purchases on this bill (${s.list.length})</summary>
       ${s.list.length ? s.list.sort((a,b)=>b.e.date.localeCompare(a.e.date)).map(x=>`<div class="row"><div class="what"><b>${esc(x.e.desc)||'(no description)'}</b><small>${words(x.e.date)} · ${x.e.cat==='need'?'Essential':'Non-essential'}${x.e.months>0?' · installment':''}</small></div><div class="amt">${fmt(x.a)}</div></div>`).join('') : '<div class="empty">None.</div>'}</details></div>`;
 }
+
 function renderCards(){
   if(!state.cards.length){ setLive('cardsLive', '<div class="card"><div class="empty">No cards yet. Add one below.</div></div>'); return; }
   setLive('cardsLive', state.cards.map(c => {
@@ -870,10 +898,9 @@ function renderCards(){
         <div class="inline" style="margin-top:10px;"><button class="btn green" style="flex:1;" data-carddone="${esc(c.id)}">Done</button><button class="btn out" data-cdel="${esc(c.id)}">Remove card</button></div></div>` : '';
     return `<div class="card" id="card-${esc(c.id)}">
       <div class="cardhead"><h2><span class="cdot" style="background:${colorOf(c)}"></span>${esc(c.name)}</h2><button class="linkbtn" data-cardedit="${esc(c.id)}">${editingCard===c.id?'Close':'Edit'}</button></div>
-      <div class="hint" style="margin-top:-4px;">Statement closes on the ${c.close}${sfx(c.close)} · payment due ${c.due} days later</div>
       ${edit}
       <div class="periods">${show('paying', last, ps.done)}${show('now', cur, false)}${show('next', next, true)}</div>
-      <details class="more" ${owe>0 && c.payNeed ? 'open' : ''}><summary>You owe ${fmt(owe)} · log a payment</summary>
+      <details class="more" ${owe>0 && c.payNeed ? 'open' : ''}><summary>Total owed ${fmt(owe)} · Pay</summary>
         <div class="row2" style="margin-top:6px;"><label class="f">Amount (₱)<input type="number" inputmode="decimal" step="0.01" data-cpamt="${esc(c.id)}" placeholder="0.00"></label>
           <div style="display:flex;align-items:flex-end;"><button class="btn green block" data-cpsave="${esc(c.id)}">Pay</button></div></div>
         <label class="check-line"><input type="checkbox" data-cpsav="${esc(c.id)}" ${c.payNeed?'':'checked'}> Paid from my savings</label>
