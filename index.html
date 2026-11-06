@@ -181,6 +181,11 @@
   .bl.carry{background:var(--green-soft); color:var(--green); font-weight:600; border-radius:6px; padding:5px 6px; margin:2px -4px;}
   .bl.carry.neg{background:var(--red-soft); color:var(--red);}
   .bl.total{border-top:1px dashed var(--rule); margin-top:4px; padding-top:6px;}
+  .card.editing{box-shadow:0 0 0 3px var(--gold); animation:editflash 1.2s ease-out 1;}
+  @keyframes editflash{0%{box-shadow:0 0 0 10px var(--gold-soft), 0 0 0 3px var(--gold);} 100%{box-shadow:0 0 0 3px var(--gold);}}
+  .editnote{background:var(--gold-soft); color:var(--ink); border-radius:10px; padding:9px 11px; font-size:.82rem; line-height:1.45; margin:-4px 0 12px;}
+  .row.editing-row{background:var(--gold-soft); border-radius:10px; padding-left:8px; padding-right:8px;}
+  .tag.editing-tag{background:var(--gold); color:#fff;}
   .theme-row{display:flex; gap:8px;}
   .theme-row button{flex:1; height:42px; border-radius:10px; border:1.5px solid var(--rule); background:var(--surface); color:var(--ink-soft); font-weight:600;}
   .theme-row button.on{background:var(--ink-bg); color:var(--on-dark); border-color:var(--ink-bg);}
@@ -271,7 +276,7 @@
   <section class="view" id="view-spend">
     <div class="twocol">
       <div class="card">
-        <h2 id="formTitle" style="margin-bottom:12px;">Log an expense</h2>
+        <h2 id="formTitle" style="margin-bottom:12px;">Log an expense</h2><div id="editNote" class="editnote" style="display:none;">You're editing an expense. Change anything below, then tap <b>Save changes</b>, or <b>Cancel</b> to leave it as it was.</div>
         <div class="stack">
           <label class="f">Date<div class="date-wrap"><input type="date" id="eDate"><span class="date-words" id="eDateWords"></span></div></label>
           <label class="f">What was it?<input type="text" id="eDesc" placeholder="e.g. Groceries" autocomplete="off"></label>
@@ -703,6 +708,9 @@ function refreshForm(){
   $('lands').innerHTML = html;
 }
 function resetForm(){
+  const fc = $('formTitle') && $('formTitle').closest('.card'); if(fc) fc.classList.remove('editing');
+  if($('editNote')) $('editNote').style.display = 'none';
+  if(editingId){ editingId = null; setTimeout(renderList, 0); }
   editingId=null; $('eDate').value=today(); $('eDesc').value=''; $('eAmt').value=''; $('eInst').checked=false; $('eMonths').value='6'; $('eMonthly').value='';
   formCat='want'; if(formMethod && formMethod.startsWith('card:') && !cardById(formMethod.slice(5))) formMethod=null;
   $('formTitle').textContent='Log an expense'; $('saveExp').textContent='Add expense'; $('cancelEdit').style.display='none';
@@ -717,7 +725,7 @@ function expRow(e, p){
   const tags = methodTag(e.method)
     + (e.months>0 ? `<span class="tag cc">${e.months} mo · ${fmt(slice(e,0))}/mo${e.monthly && r2(e.monthly*e.months - e.amount)>0 ? ' · +'+fmt(r2(e.monthly*e.months-e.amount))+' interest':''}</span>` : '')
     ;
-  return `<div class="row"><div class="what"><b>${esc(e.desc)||'(no description)'}</b><small>${sub}</small><div>${tags}</div></div>
+  return `<div class="row ${editingId===e.id?'editing-row':''}"><div class="what"><b>${esc(e.desc)||'(no description)'}${editingId===e.id?' <span class="tag editing-tag">Editing</span>':''}</b><small>${sub}</small><div>${tags}</div></div>
     <div class="amt" ${amtShown===null?'style="color:var(--ink-soft);font-weight:400;" title="Not counted in this payday"':''}>${amtShown===null ? fmt(instTotal(e)) : fmt(amtShown)}</div>
     <button class="iconbtn" data-edit="${esc(e.id)}" aria-label="Edit">✎</button><button class="iconbtn" data-del="${esc(e.id)}" aria-label="Delete">✕</button></div>`;
 }
@@ -1042,8 +1050,17 @@ document.addEventListener('click', async e => {
   if(d.edit){ const x=state.expenses.find(z=>z.id===d.edit); if(!x) return; editingId=x.id;
     $('eDate').value=x.date; $('eDesc').value=x.desc; $('eAmt').value=x.amount; formCat=x.cat; formMethod=x.method;
     $('eInst').checked=x.months>0; if(x.months>0) $('eMonths').value=String(x.months); $('eMonthly').value = x.monthly || '';
-    $('formTitle').textContent='Edit expense'; $('saveExp').textContent='Save changes'; $('cancelEdit').style.display='';
-    renderMethodChips(); refreshForm(); showTab('spend'); return; }
+    $('formTitle').textContent='Edit expense'; $('saveExp').textContent='Save changes'; $('cancelEdit').style.display=''; $('editNote').style.display='';
+    renderMethodChips(); refreshForm(); renderList();
+    // make it obvious: switch to Spend, bring the form to the middle of the screen and highlight it
+    $$('nav.bottom button').forEach(b=>b.classList.toggle('active', b.dataset.tab==='spend'));
+    if(!isDesk()){ $$('.view').forEach(v=>v.classList.toggle('active', v.id==='view-spend')); }
+    const form = $('formTitle').closest('.card');
+    form.classList.remove('editing'); void form.offsetWidth; form.classList.add('editing');
+    setTimeout(() => form.scrollIntoView({behavior:'smooth', block:'center'}), 30);
+    if(isDesk()) setTimeout(() => $('eAmt').focus({preventScroll:true}), 450);
+    toast(`Editing "${x.desc || 'expense'}". Make your changes, then tap Save changes.`);
+    return; }
   if(d.del){ const i=state.expenses.findIndex(z=>z.id===d.del); if(i<0) return; const rm=state.expenses.splice(i,1)[0]; if(editingId===rm.id) resetForm();
     save(); refresh(); toast('Expense deleted','Undo',()=>{ state.expenses.splice(i,0,rm); save(); refresh(); }); return; }
   if(d.expand){ expandedStmts.add(d.expand); renderCards(); return; }
