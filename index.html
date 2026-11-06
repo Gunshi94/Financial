@@ -202,6 +202,12 @@
   .bsec .bl > span:first-child{min-width:0; overflow-wrap:anywhere;}
   .bsec .bl > span:last-child{flex:none;}
   .othnote{font-size:.7rem; color:var(--ink-soft); margin-top:2px;}
+  .split3{grid-template-columns:repeat(var(--n,3),1fr);}
+  @media (max-width:560px){ .split3.many{grid-template-columns:1fr 1fr;} }
+  .tile small{opacity:.92;}
+  .ptotal{display:flex; justify-content:space-between; font-size:.84rem; font-weight:700; margin:2px 2px 10px;}
+  .ptotal.ok{color:var(--green);} .ptotal.bad{color:var(--red);}
+  .ptkind{margin:8px 0 0;} .ptkind button{height:34px; font-size:.78rem;}
   .theme-row{display:flex; gap:8px;}
   .theme-row button{flex:1; height:42px; border-radius:10px; border:1.5px solid var(--rule); background:var(--surface); color:var(--ink-soft); font-weight:600;}
   .theme-row button.on{background:var(--ink-bg); color:var(--on-dark); border-color:var(--ink-bg);}
@@ -298,8 +304,8 @@
           <label class="f">What was it?<input type="text" id="eDesc" placeholder="e.g. Groceries" autocomplete="off"></label>
           <label class="f">Amount (₱)<input type="number" inputmode="decimal" step="0.01" id="eAmt" placeholder="0.00"></label>
         </div>
-        <span class="lbl" style="margin-top:12px;">Essential or non-essential?</span>
-        <div class="chips" id="eCat"><button data-cat="need">Essential</button><button data-cat="want" class="on">Non-essential</button></div>
+        <span class="lbl" style="margin-top:12px;">Which part of your budget?</span>
+        <div class="chips" id="eCat"></div>
         <span class="lbl" style="margin-top:12px;">Paid with</span>
         <div class="chips" id="eMethod"></div>
         <div id="instRow" style="display:none;">
@@ -371,12 +377,9 @@
         </div>
         <div class="card">
           <h2 style="margin-bottom:10px;">Budget split</h2>
-          <div class="row3">
-            <label class="f">Essentials %<input type="number" inputmode="decimal" id="sNeed"></label>
-            <label class="f">Non-ess. %<input type="number" inputmode="decimal" id="sWant"></label>
-            <label class="f">Savings %<input type="number" inputmode="decimal" id="sSave"></label>
-          </div>
-          <div class="warnline" id="splitWarn"></div>
+          <div id="partsEdit"></div>
+          <div class="ptotal" id="splitWarn"></div>
+          <button class="btn ghost block" data-action="addPart">+ Add a part</button>
         </div>
         <div class="card">
           <h2 style="margin-bottom:4px;">Ways you pay</h2>
@@ -453,7 +456,9 @@ const KEY = 'budgetcc:state', THEME_KEY = 'budgetcc:theme';
 
 function defaults(){
   return {
-    settings:{ need:50, want:30, save:20, payType:'every', anchor:today(), every:14, day1:15, day2:31, mday:30 },
+    settings:{ need:50, want:30, save:20, payType:'every', anchor:today(), every:14, day1:15, day2:31, mday:30,
+      parts:[ {id:'need', name:'Essentials', pct:50, kind:'spend', fill:'all', color:'#A6432F'}, {id:'want', name:'Non-essentials', pct:30, kind:'spend', fill:'all', color:'#B8860B'},
+              {id:'save', name:'Savings', pct:20, kind:'save', fill:'all', color:'#2F6844'} ] },
     paydays:{},     // payday -> {income}
     cards:[],       // {id,name,close,due,start,payNeed}
     cardPays:[],    // {id,cardId,date,amount,fromSavings,note}
@@ -469,6 +474,19 @@ function normalize(s){
   const d = defaults(), o = Object.assign({}, d, s||{});
   const st = Object.assign({}, d.settings, (s&&s.settings)||{});
   ['need','want','save'].forEach(k => st[k] = Math.min(100, Math.max(0, num(st[k]))));
+  // Budget parts. Essentials and Non-essentials always exist; anything else can be added or removed.
+  const rawParts = Array.isArray(st.parts) && st.parts.length ? st.parts : [
+    {id:'need', name:'Essentials', pct:st.need, kind:'spend'}, {id:'want', name:'Non-essentials', pct:st.want, kind:'spend'},
+    {id:'save', name:'Savings', pct:st.save, kind:'save', fill:'all'}];
+  st.parts = rawParts.filter(Boolean).map((x,i) => ({ id:String(x.id||uid()), name:String(x.name||'Part').trim()||'Part',
+    pct:Math.min(100, Math.max(0, r2(num(x.pct)))), kind: x.id==='need'||x.id==='want' ? 'spend' : (x.kind==='save' ? 'save' : 'spend'),
+    fill: typeof x.fill==='string' && x.fill ? x.fill : 'all', color: okColor(x.color) || PART_COLORS[x.id] || PALETTE[(i+3) % PALETTE.length] }));
+  for(const [id, name] of [['need','Essentials'],['want','Non-essentials']]) if(!st.parts.some(x=>x.id===id)) st.parts.unshift({id, name, pct:0, kind:'spend', fill:'all', color:PART_COLORS[id]});
+  st.parts.sort((a,b) => (a.id==='need'?0:a.id==='want'?1:2) - (b.id==='need'?0:b.id==='want'?1:2));
+  // older copies of the app read these three numbers
+  st.need = st.parts.find(x=>x.id==='need').pct; st.want = st.parts.find(x=>x.id==='want').pct;
+  st.save = r2(st.parts.filter(x=>x.id!=='need' && x.id!=='want').reduce((t,x)=>t+x.pct,0));
+  const spendIds = new Set(st.parts.filter(x=>x.kind==='spend').map(x=>x.id));
   st.every = Math.min(31, Math.max(7, Math.round(num(st.every)) || 14));
   if(!isoOk(st.anchor)) st.anchor = d.settings.anchor;
   st.payType = ['every','twice','monthly'].includes(st.payType) ? st.payType : 'every';
@@ -493,7 +511,7 @@ function normalize(s){
     else if(m === 'gcash'){ needAcc('gcash','GCash','#007DFE'); m = 'acct:gcash'; }
     else if(!(m === 'cash' || /^acct:./.test(m) || /^card:./.test(m))) m = 'cash';    // keep anything that names an account or card
     const card = m.startsWith('card:') && cardIds.has(m.slice(5)), months = card ? Math.max(0, Math.round(num(e.months))) : 0;
-    return { id:String(e.id||uid()), date:e.date, desc:String(e.desc||''), amount:r2(num(e.amount)), cat:e.cat==='need'?'need':'want', method:m,
+    return { id:String(e.id||uid()), date:e.date, desc:String(e.desc||''), amount:r2(num(e.amount)), cat: spendIds.has(e.cat) ? e.cat : (e.cat==='want' ? 'want' : 'need'), method:m,
       months, monthly: months>0 && num(e.monthly)>0 ? r2(num(e.monthly)) : null };
   });
   const sv = (s&&s.savings)||{};
@@ -517,6 +535,7 @@ function normalize(s){
 }
 // ---------- colors for wallets, banks and cards ----------
 const DEFAULT_ACCOUNTS = [{id:'gcash', name:'GCash', color:'#007DFE'}, {id:'maya', name:'Maya', color:'#00C66B'}, {id:'bank', name:'Bank', color:'#4A5D70'}];
+const PART_COLORS = {need:'#A6432F', want:'#B8860B', save:'#2F6844'};
 const PALETTE = ['#B11116','#F47920','#E0A800','#00C66B','#4F6B5A','#0FA3B1','#007DFE','#1F3A93','#7B3FB8','#4A5D70'];
 const BRANDS = [[/\bbpi\b/i,'#B11116'], [/union ?bank|\bub\b/i,'#F47920'], [/gcash/i,'#007DFE'], [/\bmaya\b/i,'#00C66B'],
                 [/\bbdo\b/i,'#0033A0'], [/metrobank/i,'#0A3B8C'], [/landbank/i,'#0B8F3A']];
@@ -581,7 +600,11 @@ const prevPay = p => payFor(addDays(p, -1));
 const payEnd = p => addDays(nextPay(p), -1);
 const inPay = (d,p) => d >= p && d <= payEnd(p);
 const incomeOf = p => num((state.paydays[p]||{}).income);
-const caps = p => { const i = incomeOf(p); return { need:r2(i*S().need/100), want:r2(i*S().want/100), save:r2(i*S().save/100) }; };
+const parts = () => S().parts || (S().parts = normalize({settings:S()}).settings.parts);
+const partById = id => S().parts.find(x=>x.id===id);
+const spendParts = () => S().parts.filter(x=>x.kind==='spend');
+// each part's share of a payday's take-home pay, by part id (need = Essentials, want = Non-essentials)
+const caps = p => { const i = incomeOf(p), o = {}; for(const x of S().parts) o[x.id] = r2(i*x.pct/100); return o; };
 const curPay = () => payFor(today());
 let viewPay = null;
 
@@ -610,15 +633,16 @@ function eachCharge(fn){
 }
 function spentIn(p){
   const r = {need:0, want:0};
-  eachCharge((e,a,pp)=>{ if(pp===p) r[e.cat]+=a; });
+  eachCharge((e,a,pp)=>{ if(pp===p) r[e.cat] = (r[e.cat]||0) + a; });
   // payments toward a card's old balance count as an essential when that card is set up that way
   for(const cp of state.cardPays){ const c = cardById(cp.cardId); if(c && c.payNeed && inPay(cp.date,p)) r.need += cp.amount; }
-  r.need=r2(r.need); r.want=r2(r.want); return r;
+  for(const k of Object.keys(r)) r[k] = r2(r[k]); return r;
 }
-function savedIn(p){
+// what a setting-aside part has been filled with during a payday: from Savings, a goal, or both
+function savedIn(p, fill='all'){
   let t = 0;
-  for(const e of state.savings.log) if(e.amount>0 && !e.opening && inPay(e.date,p)) t += e.amount;
-  for(const e of state.goalLog) if(e.amount>0 && inPay(e.date,p)) t += e.amount;
+  if(fill==='all' || fill==='savings') for(const e of state.savings.log) if(e.amount>0 && !e.opening && inPay(e.date,p)) t += e.amount;
+  if(fill==='all' || fill.startsWith('goal:')) for(const e of state.goalLog) if(e.amount>0 && inPay(e.date,p) && (fill==='all' || 'goal:'+e.goalId===fill)) t += e.amount;
   return r2(t);
 }
 function stmtCharged(c, cl){ let t=0; eachCharge((e,a,pp,cc,ccl)=>{ if(cc===c && ccl===cl) t+=a; }); return r2(t); }
@@ -663,22 +687,22 @@ function renderWelcome(){
 }
 function renderHome(){
   renderWelcome();
-  const p = viewPay, c = caps(p), s = spentIn(p), sv = savedIn(p), isCur = p === curPay();
-  setLive('splitTiles', `<div class="split3">
-    <div class="tile need"><small>Essentials ${S().need}%</small><b>${fmt(c.need)}</b></div>
-    <div class="tile want"><small>Non-essentials ${S().want}%</small><b>${fmt(c.want)}</b></div>
-    <div class="tile save"><small>Savings ${S().save}%</small><b>${fmt(c.save)}</b></div></div>`);
+  const p = viewPay, c = caps(p), s = spentIn(p), isCur = p === curPay();
+  const P = parts();
+  setLive('splitTiles', `<div class="split3 ${P.length>3?'many':''}" style="--n:${Math.min(P.length,6)}">` + P.map(x =>
+    `<div class="tile" style="background:${x.color};color:${onColor(x.color)}"><small>${esc(x.name)} ${x.pct}%</small><b>${fmt(c[x.id])}</b></div>`).join('') + `</div>`);
   const daysLeft = isCur ? Math.max(1, daysBetween(today(), payEnd(p)) + 1) : 0;
-  const bucket = (name, cls, cap, used, verb, extra='') => `<div class="bucket"><div class="bh"><b>${name}</b><span>${fmt(cap)}</span></div>
-    <div class="meter"><div class="fill ${cls!=='save' && used>cap ? 'over' : cls}" style="width:${pct(used,cap)}%"></div></div>
+  const bucket = (name, cls, cap, used, verb, extra='', color='') => `<div class="bucket"><div class="bh"><b>${name}</b><span>${fmt(cap)}</span></div>
+    <div class="meter"><div class="fill ${cls!=='save' && used>cap ? 'over' : cls}" style="width:${pct(used,cap)}%;${color && !(cls!=='save' && used>cap) ? 'background:'+color : ''}"></div></div>
     <div class="bv"><span>${verb} ${fmt(used)}</span><span class="${cls!=='save' && cap-used<0 ? 'neg':'pos'}">${cls==='save' ? (used>=cap && cap>0 ? '✓ done' : fmt(Math.max(0,cap-used))+' to go') : (cap-used<0 ? fmt(used-cap)+' over' : fmt(cap-used)+' left')}</span></div>${extra}</div>`;
   const wantLeft = r2(c.want - s.want);
   setLive('meters', `<h2 style="margin-bottom:4px;">How this payday is going</h2>
     ${incomeOf(p)>0 ? '' : '<p class="hint">Enter your take-home pay above to see the bars fill.</p>'}
-    ${bucket('Essentials','need',c.need,s.need,'Spent')}
-    ${bucket('Non-essentials','want',c.want,s.want,'Spent', isCur && wantLeft>0 ? `<div class="daily">About <b>${fmt(wantLeft/daysLeft)}</b> a day for ${daysLeft} more day${daysLeft>1?'s':''}.</div>` : '')}
-    ${bucket('Savings','save',c.save,sv,'Put away')}
-    <p class="hint">"Put away" counts what you added to Savings and your goals during this payday.</p>`);
+    ${P.map(x => x.kind==='spend'
+        ? bucket(esc(x.name), x.id==='need'?'need':x.id==='want'?'want':'spend', c[x.id], s[x.id]||0, 'Spent',
+            x.id==='want' && isCur && wantLeft>0 ? `<div class="daily">About <b>${fmt(wantLeft/daysLeft)}</b> a day for ${daysLeft} more day${daysLeft>1?'s':''}.</div>` : '', x.color)
+        : bucket(esc(x.name), 'save', c[x.id], savedIn(p, x.fill), 'Put away', '', x.color)).join('')}
+    ${P.some(x=>x.kind==='save') ? `<p class="hint">"Put away" counts what you added to ${P.filter(x=>x.kind==='save').map(x=>x.fill==='all'?'Savings and your goals':x.fill==='savings'?'Savings':((state.goals.find(g=>'goal:'+g.id===x.fill)||{}).name||'a goal')).filter((v,i,a)=>a.indexOf(v)===i).join(', ')} during this payday.</p>` : ''}`);
   renderHomeCards();
 }
 function renderHomeCards(){
@@ -701,14 +725,15 @@ function renderMethodChips(){
 }
 function refreshForm(){
   $('eDateWords').textContent = words($('eDate').value) || 'Pick a date';
-  $$('#eCat button').forEach(b => b.classList.toggle('on', b.dataset.cat === formCat));
+  if(!spendParts().some(x=>x.id===formCat)) formCat = 'want';
+  $('eCat').innerHTML = spendParts().map(x => `<button data-cat="${esc(x.id)}" class="${x.id===formCat?'on':''}">${x.id==='need'?'Essential':x.id==='want'?'Non-essential':esc(x.name)}</button>`).join('');
   $$('#eMethod button').forEach(b => b.classList.toggle('on', b.dataset.method === formMethod));
   const c = formMethod && formMethod.startsWith('card:') ? cardById(formMethod.slice(5)) : null;
   $('instRow').style.display = c ? '' : 'none';
   $('instBox').style.display = c && $('eInst').checked ? '' : 'none';
   const d = $('eDate').value, amt = num($('eAmt').value);
   if(!isoOk(d)){ $('lands').innerHTML = 'Pick a date.'; return; }
-  const p = payFor(d), cat = formCat==='need' ? 'Essentials' : 'Non-essentials';
+  const p = payFor(d), cat = esc((partById(formCat)||{name:'Essentials'}).name);
   if(c && $('eInst').checked){
     const n = Math.round(num($('eMonths').value)), mon = num($('eMonthly').value);
     const each = mon>0 ? mon : (amt>0 ? slice({amount:amt, months:n, monthly:null},0) : 0);
@@ -747,20 +772,21 @@ function expRow(e, p){
 }
 function renderList(){
   const p = viewPay, c = caps(p), s = spentIn(p);
-  const items = { need:[], want:[] }, seen = new Set();
-  eachCharge((e,a,pp)=>{ if(pp===p && !seen.has(e.id)){ seen.add(e.id); items[e.cat].push(e); } });
+  const items = {}, seen = new Set(); for(const x of spendParts()) items[x.id] = [];
+  const put = e => { (items[e.cat] || items.need).push(e); };
+  eachCharge((e,a,pp)=>{ if(pp===p && !seen.has(e.id)){ seen.add(e.id); put(e); } });
   // installments also show in the payday you bought them, so you can always find and edit them
-  for(const e of state.expenses) if(e.months>0 && payFor(e.date)===p && !seen.has(e.id)){ seen.add(e.id); items[e.cat].push(e); }
+  for(const e of state.expenses) if(e.months>0 && payFor(e.date)===p && !seen.has(e.id)){ seen.add(e.id); put(e); }
   const pays = state.cardPays.filter(cp => { const cd=cardById(cp.cardId); return cd && cd.payNeed && inPay(cp.date,p); });
-  const section = (cat, name, cls) => {
-    const cap = c[cat], used = s[cat], list = items[cat].sort((a,b)=>b.date.localeCompare(a.date));
+  const section = (cat, name, cls, color) => {
+    const cap = c[cat]||0, used = s[cat]||0, list = items[cat].sort((a,b)=>b.date.localeCompare(a.date));
     const extra = cat==='need' ? pays.map(cp => `<div class="row"><div class="what"><b>${esc(cardById(cp.cardId).name)} card payment</b><small>${words(cp.date)}</small><div><span class="tag cc">card payment</span></div></div><div class="amt">${fmt(cp.amount)}</div></div>`).join('') : '';
-    return `<div class="section ${cls}"><div class="sh"><b>${name}</b><span class="mono" style="font-size:.82rem;">${fmt(used)} of ${fmt(cap)}</span></div>
-      <div class="meter"><div class="fill ${used>cap?'over':cls}" style="width:${pct(used,cap)}%"></div></div>
+    return `<div class="section ${cls}" style="border-top-color:${color}"><div class="sh"><b>${esc(name)}</b><span class="mono" style="font-size:.82rem;">${fmt(used)} of ${fmt(cap)}</span></div>
+      <div class="meter"><div class="fill ${used>cap?'over':cls}" style="width:${pct(used,cap)}%;${used>cap?'':'background:'+color}"></div></div>
       <div class="bv mono" style="display:flex;justify-content:flex-end;font-size:.78rem;margin-top:4px;"><span class="${cap-used<0?'bad':'ok'}" style="font-weight:600;">${cap-used<0?fmt(used-cap)+' over':fmt(cap-used)+' left'}</span></div>
       ${list.length || extra ? list.map(e=>expRow(e,p)).join('') + extra : '<div class="empty">Nothing logged.</div>'}</div>`;
   };
-  setLive('expList', section('need','Essentials','need') + '<div style="height:12px"></div>' + section('want','Non-essentials','want'));
+  setLive('expList', spendParts().map(x => section(x.id, x.name, x.id==='need'?'need':x.id==='want'?'want':'spend', x.color)).join('<div style="height:12px"></div>'));
 }
 
 // ----- cards tab -----
@@ -774,14 +800,14 @@ function paydaysIn(start, end){ const out=[]; let p = payFor(start); if(p < star
 function baseStats(c, cl){
   const start = stmtStart(cl,c), end = cl, pays = paydaysIn(start, end);
   const budget = r2(pays.reduce((s,p)=>s+caps(p).want, 0)), missing = pays.filter(p => incomeOf(p) <= 0);
-  let mineWant=0, mineNeed=0, otherWant=0, inst=0; const list=[], otherBy={};
+  let mineWant=0, mineNeed=0, otherWant=0, inst=0; const list=[], otherBy={}, mineBy={};
   for(const it of chargeItems()){
-    if(it.c===c && it.cl===cl){ if(it.e.cat==='want') mineWant+=it.a; else mineNeed+=it.a; if(it.e.months>0) inst+=it.a; list.push(it); }
+    if(it.c===c && it.cl===cl){ if(it.e.cat==='want') mineWant+=it.a; else mineNeed+=it.a; mineBy[it.e.cat] = (mineBy[it.e.cat]||0) + it.a; if(it.e.months>0) inst+=it.a; list.push(it); }
     else if(it.e.cat==='want' && it.eff>=start && it.eff<=end){ otherWant+=it.a; otherBy[it.e.method] = (otherBy[it.e.method]||0) + it.a; }
   }
   mineWant=r2(mineWant); mineNeed=r2(mineNeed); otherWant=r2(otherWant);
   const spent = r2(mineWant+otherWant);
-  return { start, end, due:stmtDue(cl,c), pays, missing, budget, mineWant, mineNeed, otherWant, otherBy, spent, inst:r2(inst), total:r2(mineWant+mineNeed), left:r2(budget-spent), list };
+  return { start, end, due:stmtDue(cl,c), pays, missing, budget, mineWant, mineNeed, mineBy, otherWant, otherBy, spent, inst:r2(inst), total:r2(mineWant+mineNeed), left:r2(budget-spent), list };
 }
 // Carry-over: non-essential budget a bill didn't use passes to the next bill (and an overspend passes on too).
 // It starts from the first bill you logged purchases on, so months you didn't log never pass on money that may not be there.
@@ -838,7 +864,8 @@ function stmtPanel(c, role, cl){
   const bill = `<div class="bsec"><div class="blbl">${role==='paying' ? 'Bill' : 'Bill so far'}</div>
       <div class="bbig mono">${fmt(s.total)}</div>
       ${line('<span class="dim">Non-essentials</span>', fmt(s.mineWant))}
-      ${s.mineNeed>0 ? line('<span class="dim">Essentials</span>', fmt(s.mineNeed)) : ''}</div>`;
+      ${parts().filter(x=>x.id!=='want' && (s.mineBy[x.id]||0)>0).map(x => line(`<span class="dim">${esc(x.name)}</span>`, fmt(s.mineBy[x.id]))).join('')}
+      ${Object.keys(s.mineBy).filter(k=>k!=='want' && !partById(k) && s.mineBy[k]>0).map(k => line('<span class="dim">Other</span>', fmt(s.mineBy[k]))).join('')}</div>`;
   // the budget: each salary, any carry-over, this card, then anything paid another way
   const salaries = s.pays.map(p => incomeOf(p) > 0 ? line(`${shortWords(p)} salary`, fmt(caps(p).want)) : line(`<span class="dim">${shortWords(p)} salary</span>`, '<span class="dim">—</span>')).join('')
     || line('<span class="dim">No paydays in this bill</span>', '');
@@ -869,7 +896,7 @@ function stmtPanel(c, role, cl){
     <div class="phead"><div class="role">${label} · ${shortWords(s.start)} – ${shortWords(cl)}</div><div class="sub">Due ${shortWords(s.due)}</div></div>
     ${bill}${budget}${extra}
     <details class="more"><summary>Purchases on this bill (${s.list.length})</summary>
-      ${s.list.length ? s.list.sort((a,b)=>b.e.date.localeCompare(a.e.date)).map(x=>`<div class="row"><div class="what"><b>${esc(x.e.desc)||'(no description)'}</b><small>${words(x.e.date)} · ${x.e.cat==='need'?'Essential':'Non-essential'}${x.e.months>0?' · installment':''}</small></div><div class="amt">${fmt(x.a)}</div></div>`).join('') : '<div class="empty">None.</div>'}</details></div>`;
+      ${s.list.length ? s.list.sort((a,b)=>b.e.date.localeCompare(a.e.date)).map(x=>`<div class="row"><div class="what"><b>${esc(x.e.desc)||'(no description)'}</b><small>${words(x.e.date)} · ${x.e.cat==='need'?'Essential':x.e.cat==='want'?'Non-essential':esc((partById(x.e.cat)||{name:'Essential'}).name)}${x.e.months>0?' · installment':''}</small></div><div class="amt">${fmt(x.a)}</div></div>`).join('') : '<div class="empty">None.</div>'}</details></div>`;
 }
 
 function renderCards(){
@@ -958,10 +985,29 @@ function renderAccounts(){
         <input type="text" data-pmname="${esc(a.id)}" value="${esc(a.name)}" aria-label="Name"><button class="iconbtn" data-pmdel="${esc(a.id)}" aria-label="Remove">✕</button></div>
         ${swatches('pmcolor', a.id, colorOf(a))}</div>`).join(''));
 }
+function fillOptions(x){
+  const opts = [['all','Savings and goals'],['savings','Savings box'], ...state.goals.map(g=>['goal:'+g.id, g.name])];
+  return opts.map(([v,l]) => `<option value="${esc(v)}" ${x.fill===v?'selected':''}>${esc(l)}</option>`).join('');
+}
+function renderParts(){
+  setLive('partsEdit', parts().map(x => {
+    const locked = x.id==='need' || x.id==='want';
+    return `<div class="pmrow"><div class="inline"><span class="cdot" style="background:${x.color};margin:0;"></span>
+      <input type="text" data-ptname="${esc(x.id)}" value="${esc(x.name)}" aria-label="Name">
+      <input type="number" inputmode="decimal" data-ptpct="${esc(x.id)}" value="${x.pct}" style="max-width:76px;" aria-label="Percent"><span>%</span>
+      ${locked ? '' : `<button class="iconbtn" data-ptdel="${esc(x.id)}" aria-label="Remove">✕</button>`}</div>
+      ${locked ? `<div class="hint" style="margin-top:4px;">Spending${x.id==='want' ? ' · used for your card budgets' : ' · always kept'}</div>`
+        : `<div class="chips ptkind"><button data-ptkind="${esc(x.id)}|spend" class="${x.kind==='spend'?'on':''}">Spending</button><button data-ptkind="${esc(x.id)}|save" class="${x.kind==='save'?'on':''}">Setting aside</button></div>
+           ${x.kind==='save' ? `<label class="f" style="margin-top:6px;">Fills from<select data-ptfill="${esc(x.id)}">${fillOptions(x)}</select></label>` : ''}`}
+    </div>`; }).join(''));
+}
+function syncTotalsOnly(){ const tot = r2(parts().reduce((t,x)=>t+x.pct,0)), okTot = Math.abs(tot-100) < .001;
+  $('splitWarn').className = 'ptotal ' + (okTot ? 'ok' : 'bad'); $('splitWarn').innerHTML = `<span>Total</span><span class="mono">${tot}%${okTot ? ' ✓' : ' · should be 100%'}</span>`; }
 function syncSettings(){
   renderAccounts();
   const st = S();
-  for(const [id,v] of [['sNeed',st.need],['sWant',st.want],['sSave',st.save],['sEvery',st.every],['sAnchor',st.anchor],['sDay1',st.day1],['sDay2',st.day2],['sMday',st.mday]]){ const el=$(id); if(el!==document.activeElement) el.value=v; }
+  renderParts();
+  for(const [id,v] of [['sEvery',st.every],['sAnchor',st.anchor],['sDay1',st.day1],['sDay2',st.day2],['sMday',st.mday]]){ const el=$(id); if(el!==document.activeElement) el.value=v; }
   $$('#payTypeChips button').forEach(b => b.classList.toggle('on', b.dataset.paytype === st.payType));
   $('payEvery').style.display = st.payType==='every' ? '' : 'none';
   $('payTwice').style.display = st.payType==='twice' ? '' : 'none';
@@ -970,7 +1016,9 @@ function syncSettings(){
     $('payHint').innerHTML = `Next paydays: <b>${ups.join(', ')}</b>.` + (st.payType==='every' ? '' : ' A day past the end of a month counts as its last day, so 31 means "last day of the month".')
       + ' Changing your schedule doesn\'t move pay you\'ve already entered.'; }
   $('sAnchorWords').textContent = words(st.anchor);
-  const tot = st.need+st.want+st.save; setText('splitWarn', Math.abs(tot-100)>.001 ? `These add up to ${tot}%. They should total 100%.` : '');
+  const tot = r2(st.parts.reduce((t,x)=>t+x.pct,0)), okTot = Math.abs(tot-100) < .001;
+  $('splitWarn').className = 'ptotal ' + (okTot ? 'ok' : 'bad');
+  $('splitWarn').innerHTML = `<span>Total</span><span class="mono">${tot}%${okTot ? ' ✓' : ' · should be 100%'}</span>`;
 }
 function renderEditors(){}
 function refresh(){ renderPeriod(); renderHome(); renderList(); renderCards(); renderSavings(); renderGoals(); renderEditors(); }
@@ -1026,13 +1074,12 @@ function savManual(sign){ const v=r2(num($('savAmt').value)); if(!(v>0)){ toast(
 $('savBalance').addEventListener('input', e => { state.savings.adj = r2(num(e.target.value) - state.savings.log.reduce((t,x)=>t+x.amount,0)); save(); renderSavings(); });
 
 function applySettings(){ const st=S();
-  st.need=Math.min(100,Math.max(0,num($('sNeed').value))); st.want=Math.min(100,Math.max(0,num($('sWant').value))); st.save=Math.min(100,Math.max(0,num($('sSave').value)));
   st.every=Math.min(31,Math.max(7,Math.round(num($('sEvery').value))||st.every)); if(isoOk($('sAnchor').value)) st.anchor=$('sAnchor').value;
   const dom = (id, cur) => Math.min(31, Math.max(1, Math.round(num($(id).value)) || cur));
   st.day1 = dom('sDay1', st.day1); st.day2 = dom('sDay2', st.day2); st.mday = dom('sMday', st.mday);
   if(st.day1 > st.day2) [st.day1, st.day2] = [st.day2, st.day1];
   viewPay=payFor(viewPay); save(); renderAll(); }
-['sNeed','sWant','sSave','sEvery','sAnchor','sDay1','sDay2','sMday'].forEach(id => $(id).addEventListener('change', applySettings));
+['sEvery','sAnchor','sDay1','sDay2','sMday'].forEach(id => $(id).addEventListener('change', applySettings));
 $('sAnchor').addEventListener('input', () => $('sAnchorWords').textContent = words($('sAnchor').value));
 
 // typing inside the editors and goal boxes: update the data straight away, redraw the rest
@@ -1040,6 +1087,9 @@ document.addEventListener('input', e => {
   const t = e.target, d = t.dataset || {};
   const g = id => state.goals.find(x=>x.id===id);
   if(d.cname){ const c=cardById(d.cname); if(c){ c.name = t.value.trim() || c.name; if(!c.colorPicked) c.color = brandColor(c.name, state.cards.indexOf(c)); save(); renderMethodChips(); refreshForm(); renderHome(); renderList(); } }
+  else if(d.ptname){ const x=partById(d.ptname); if(x){ x.name = t.value.trim() || x.name; save(); renderHome(); renderList(); refreshForm(); } }
+  else if(d.ptpct){ const x=partById(d.ptpct); if(x){ x.pct = Math.min(100, Math.max(0, r2(num(t.value)))); S().need = partById('need').pct; S().want = partById('want').pct;
+      S().save = r2(parts().filter(y=>y.id!=='need'&&y.id!=='want').reduce((q,y)=>q+y.pct,0)); save(); syncTotalsOnly(); renderHome(); renderList(); renderCards(); } }
   else if(d.pmname){ const a=state.accounts.find(x=>x.id===d.pmname); if(a){ a.name = t.value.trim() || a.name; if(!a.colorPicked) a.color = brandColor(a.name, state.accounts.indexOf(a)); save(); renderMethodChips(); refreshForm(); renderList(); } }
   else if(d.cclose){ const c=cardById(d.cclose); if(c){ const v=Math.round(num(t.value)); if(v>=1&&v<=28){ c.close=v; save(); renderHome(); renderList(); refreshForm(); } } }
   else if(d.cdue){ const c=cardById(d.cdue); if(c){ const v=Math.round(num(t.value)); if(v>=1&&v<=60){ c.due=v; save(); renderHome(); } } }
@@ -1052,18 +1102,29 @@ document.addEventListener('input', e => {
   else if(d.aamt){ const [gi,ai]=d.aamt.split(':'), x=g(gi), a=x&&x.accounts.find(z=>z.id===ai); if(a){ a.adj = r2(num(t.value) - state.goalLog.filter(e=>e.goalId===x.id && e.acctId===a.id).reduce((s2,e)=>s2+e.amount,0)); save(); } }
 });
 document.addEventListener('change', e => { const t=e.target, d=t.dataset||{};
-  if(d.cneed){ const c=cardById(d.cneed); if(c){ c.payNeed=t.checked; save(); refresh(); } }
+  if(d.ptfill){ const x=partById(d.ptfill); if(x){ x.fill = t.value; save(); renderHome(); } }
+  else if(d.cneed){ const c=cardById(d.cneed); if(c){ c.payNeed=t.checked; save(); refresh(); } }
   // while a card is being edited, leave its box alone so tapping the next field doesn't lose focus; Done redraws it
   else if(d.cname || d.cclose || d.cdue){ renderHome(); renderList(); renderMethodChips(); refreshForm();
     const c = cardById(d.cname||d.cclose||d.cdue), h = c && document.querySelector(`#card-${c.id} .cardhead h2`); if(h) h.textContent = c.name; }
 });
 
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-pmcolor],[data-cardcolor],[data-pmdel],[data-paytype],[data-tab],[data-pay-nav],[data-cat],[data-method],[data-edit],[data-del],[data-paycard],[data-payrest],[data-expand],[data-collapse],[data-cardedit],[data-carddone],[data-cpsave],[data-cpdel],[data-cpfixsave],[data-savdel],[data-gacct],[data-gadd],[data-gout],[data-gldel],[data-goaledit],[data-goaldone],[data-aadd],[data-adel],[data-gdel],[data-cdel],[data-action],[data-theme-set]');
+  const el = e.target.closest('[data-ptkind],[data-ptdel],[data-pmcolor],[data-cardcolor],[data-pmdel],[data-paytype],[data-tab],[data-pay-nav],[data-cat],[data-method],[data-edit],[data-del],[data-paycard],[data-payrest],[data-expand],[data-collapse],[data-cardedit],[data-carddone],[data-cpsave],[data-cpdel],[data-cpfixsave],[data-savdel],[data-gacct],[data-gadd],[data-gout],[data-gldel],[data-goaledit],[data-goaldone],[data-aadd],[data-adel],[data-gdel],[data-cdel],[data-action],[data-theme-set]');
   if(!el) return; const d = el.dataset;
   if(d.tab){ showTab(d.tab); return; }
   if(d.payNav){ const k=Number(d.payNav); const np = k>0 ? nextPay(viewPay) : prevPay(viewPay); if(k>0 && viewPay>=nextPay(curPay())) return; viewPay=np; renderPeriod(); renderHome(); renderList(); return; }
   if(d.themeSet){ setTheme(d.themeSet); return; }
+  if(d.ptkind){ const [id, kind] = d.ptkind.split('|'), x = partById(id); if(!x || x.kind===kind) return;
+    if(kind==='save'){ const n = state.expenses.filter(e=>e.cat===id).length;
+      if(n && await ask(`${n} expense${n>1?'s are':' is'} logged under ${x.name}. Setting aside parts don't hold expenses, so ${n>1?'they':'it'} will move to Essentials.`, [{label:'Move and switch', cls:'danger'},{label:'Cancel', cls:'ghost'}])!==0) return;
+      state.expenses.forEach(e=>{ if(e.cat===id) e.cat='need'; }); if(formCat===id) formCat='need'; }
+    x.kind = kind; save(); renderAll(); return; }
+  if(d.ptdel){ const x = partById(d.ptdel); if(!x || x.id==='need' || x.id==='want') return;
+    const n = state.expenses.filter(e=>e.cat===x.id).length;
+    if(await ask(`Remove ${x.name} (${x.pct}%)?${n ? ` Its ${n} expense${n>1?'s':''} will move to Essentials.` : ''} Remember to give its % to another part so they still add up to 100%.`, [{label:'Remove', cls:'danger'},{label:'Cancel', cls:'ghost'}])!==0) return;
+    state.expenses.forEach(e=>{ if(e.cat===x.id) e.cat='need'; }); S().parts = parts().filter(y=>y.id!==x.id); if(formCat===x.id) formCat='need';
+    S().save = r2(parts().filter(y=>y.id!=='need'&&y.id!=='want').reduce((q,y)=>q+y.pct,0)); save(); renderAll(); return; }
   if(d.pmcolor){ const [id, col] = d.pmcolor.split('|'), a = state.accounts.find(x=>x.id===id); if(a && okColor(col)){ a.color = col; a.colorPicked = true; save(); renderAccounts(); renderMethodChips(); refreshForm(); renderList(); } return; }
   if(d.cardcolor){ const [id, col] = d.cardcolor.split('|'), cd = cardById(id); if(cd && okColor(col)){ cd.color = col; cd.colorPicked = true; save(); renderMethodChips(); refreshForm(); refresh(); } return; }
   if(d.pmdel){ const a = state.accounts.find(x=>x.id===d.pmdel); if(!a) return;
@@ -1131,7 +1192,8 @@ document.addEventListener('click', async e => {
     g.accounts=g.accounts.filter(x=>x.id!==ai); state.goalLog=state.goalLog.filter(x=>!(x.goalId===gi && x.acctId===ai)); save(); renderGoals(); return; }
   if(d.gdel){ const g=state.goals.find(x=>x.id===d.gdel); if(!g) return;
     if(await ask(`Delete the goal "${g.name}"? This can't be undone.`, [{label:'Delete', cls:'danger'},{label:'Cancel', cls:'ghost'}])!==0) return;
-    state.goals=state.goals.filter(x=>x.id!==g.id); state.goalLog=state.goalLog.filter(x=>x.goalId!==g.id); editingGoal=null; save(); refresh(); return; }
+    state.goals=state.goals.filter(x=>x.id!==g.id); state.goalLog=state.goalLog.filter(x=>x.goalId!==g.id);
+    for(const x of parts()) if(x.fill==='goal:'+g.id) x.fill='all'; editingGoal=null; save(); refresh(); return; }
   if(d.cdel){ const c=cardById(d.cdel); if(!c) return; const used=state.expenses.some(x=>x.method==='card:'+c.id);
     if(await ask(`Remove the ${c.name} card?${used?' Purchases made with it will change to Cash.':''}`, [{label:'Remove', cls:'danger'},{label:'Cancel', cls:'ghost'}])!==0) return;
     state.cards=state.cards.filter(x=>x.id!==c.id); state.cardPays=state.cardPays.filter(p=>p.cardId!==c.id);
@@ -1142,6 +1204,9 @@ document.addEventListener('click', async e => {
       setTimeout(()=>{ const n=document.querySelector(`[data-gname="${g.id}"]`); if(n){ n.focus(); n.select(); } },50); break; }
     case 'addCard': { const nc={id:uid(), name:'New card', close:15, due:19, start:0, payNeed:false, color:PALETTE[(state.cards.length+1) % PALETTE.length], colorPicked:false}; state.cards.push(nc); editingCard=nc.id; save(); renderAll();
       setTimeout(()=>{ const n=document.querySelector(`[data-cname="${nc.id}"]`); if(n){ n.scrollIntoView({block:'center'}); n.focus({preventScroll:true}); n.select(); } },60); break; }
+    case 'addPart': { const used = new Set(parts().map(x=>x.color)); const col = PALETTE.find(x=>!used.has(x)) || PALETTE[parts().length % PALETTE.length];
+      const np = {id:uid(), name:'New part', pct:0, kind:'spend', fill:'all', color:col}; S().parts.push(np); save(); renderAll();
+      setTimeout(()=>{ const n=document.querySelector(`[data-ptname="${np.id}"]`); if(n){ n.focus(); n.select(); } },50); break; }
     case 'addAcct': { const na = {id:uid(), name:'New account', color:PALETTE[state.accounts.length % PALETTE.length], colorPicked:false}; state.accounts.push(na); save(); renderAccounts(); renderMethodChips();
       setTimeout(()=>{ const n=document.querySelector(`[data-pmname="${na.id}"]`); if(n){ n.focus(); n.select(); } },50); break; }
     case 'welcomeDone': state.settings.welcomed = true; save(); renderWelcome(); break;
@@ -1193,7 +1258,7 @@ setInterval(dayCheck, 60000);
 // secret gist on your GitHub. Each record carries the time it last changed; when devices differ, the newest
 // version of each record wins and deletions carry over.
 let API = 'https://api.github.com';
-const SCHEMA = 2;   // raise when the saved format changes, so an older copy of the app pauses syncing instead of mixing formats
+const SCHEMA = 3;   // raise when the saved format changes, so an older copy of the app pauses syncing instead of mixing formats
 const SYNC_KEY = 'financial:sync', GIST_DESC = 'Financial tracker sync (encrypted)', GIST_FILE = 'financial-sync.json';
 let sync = null; try{ sync = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null'); }catch(_){ sync = null; }
 let syncBusy = false, syncAgain = false, syncTimer = null, lastSyncAt = null, syncState = 'off', syncDetail = '', lastRec = null;
