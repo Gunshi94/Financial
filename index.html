@@ -208,6 +208,22 @@
   .ptotal{display:flex; justify-content:space-between; font-size:.84rem; font-weight:700; margin:2px 2px 10px;}
   .ptotal.ok{color:var(--green);} .ptotal.bad{color:var(--red);}
   .ptkind{margin:8px 0 0;} .ptkind button{height:34px; font-size:.78rem;}
+  .splitbox{border:1.5px dashed var(--slate); border-radius:12px; padding:10px; margin-top:8px; background:transparent;}
+  .splitbox .lbl{margin-top:12px;} .splitbox > .lbl:first-child{margin-top:0;}
+  .sprow{margin-top:6px;} .sprow input[type=text]{flex:1; min-width:0;} .sprow .mono{white-space:nowrap; font-weight:600;}
+  .split-you{border-top:1px dashed var(--rule); margin-top:10px; padding-top:8px; font-size:.9rem;}
+  .split-you .mono{color:var(--green);} .split-you .mono.bad{color:var(--red);}
+  .tag.splittag{background:var(--slate-soft, #E2E7EC); color:var(--ink);}
+  :root[data-theme="dark"] .tag.splittag{background:#26303A; color:#B8C4D0;}
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .tag.splittag{background:#26303A; color:#B8C4D0;} }
+  .amt small.yours{display:block; font-size:.66rem; font-weight:500; color:var(--ink-soft); text-align:right;}
+  .bl.owedline{color:var(--slate);}
+  .owedbox{margin-top:12px;}
+  .owerow{display:grid; grid-template-columns:1fr auto; gap:4px 10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--rule);}
+  .owerow:last-child{border-bottom:none;} .owerow.done{opacity:.7;}
+  .owerow .what small{display:block; color:var(--ink-soft); font-size:.78rem; margin-top:1px;}
+  .owebtns{grid-column:1 / -1; display:flex; gap:8px; align-items:center;}
+  .owebtns .btn{height:34px; font-size:.78rem; padding:0 12px;}
   .theme-row{display:flex; gap:8px;}
   .theme-row button{flex:1; height:42px; border-radius:10px; border:1.5px solid var(--rule); background:var(--surface); color:var(--ink-soft); font-weight:600;}
   .theme-row button.on{background:var(--ink-bg); color:var(--on-dark); border-color:var(--ink-bg);}
@@ -317,6 +333,15 @@
             </div>
             <p class="hint" style="margin-top:6px;">Leave the monthly payment empty for 0% interest. If your bank adds interest, type the monthly amount from your bank.</p>
           </div>
+        </div>
+        <label class="check-line" style="margin-top:6px;"><input type="checkbox" id="eSplit"> Split with others</label>
+        <div id="splitBox" class="splitbox" style="display:none;">
+          <span class="lbl" style="margin-top:0;">How many people, including you?</span>
+          <div class="chips" id="splitN"><button data-splitn="2">2</button><button data-splitn="3">3</button><button data-splitn="4">4</button><button data-splitn="custom">Custom</button></div>
+          <span class="lbl">Who owes you (names optional)</span>
+          <div id="splitPeople"></div>
+          <button class="linkbtn" data-action="splitAdd" id="splitAdd" style="display:none;margin-top:6px;">+ Add person</button>
+          <div class="bl split-you"><b>Your share</b><b class="mono" id="splitMine"></b></div>
         </div>
         <div class="lands" id="lands"></div>
         <div class="inline" style="margin-top:12px;">
@@ -512,7 +537,7 @@ function normalize(s){
     else if(!(m === 'cash' || /^acct:./.test(m) || /^card:./.test(m))) m = 'cash';    // keep anything that names an account or card
     const card = m.startsWith('card:') && cardIds.has(m.slice(5)), months = card ? Math.max(0, Math.round(num(e.months))) : 0;
     return { id:String(e.id||uid()), date:e.date, desc:String(e.desc||''), amount:r2(num(e.amount)), cat: spendIds.has(e.cat) ? e.cat : (e.cat==='want' ? 'want' : 'need'), method:m,
-      months, monthly: months>0 && num(e.monthly)>0 ? r2(num(e.monthly)) : null };
+      months, monthly: months>0 && num(e.monthly)>0 ? r2(num(e.monthly)) : null, split: cleanSplit(e.split) };
   });
   const sv = (s&&s.savings)||{};
   o.savings = { adj:sv.adj, balance:r2(num(sv.balance)), log:(Array.isArray(sv.log)?sv.log:[]).filter(e=>e&&isFinite(num(e.amount))).map(e=>({id:String(e.id||uid()), date:isoOk(e.date)?e.date:today(), amount:r2(num(e.amount)), note:String(e.note||''), opening:!!e.opening, ref:e.ref||null})) };
@@ -560,6 +585,18 @@ function methodVars(m){ const col = methodColor(m);
   return `--mc:${col};--mon:${onColor(col)};--tlb:${mixHex(col,'#FFFFFF',0.84)};--tlf:${mixHex(col,'#000000',0.42)};--tdb:${mixHex(col,'#12171C',0.72)};--tdf:${mixHex(col,'#FFFFFF',0.45)}`; }
 const methodTag = m => `<span class="tag m" style="${methodVars(m)}">${esc(methodLabel(m))}</span>`;
 const allMethods = () => ['cash', ...state.accounts.map(a=>'acct:'+a.id), ...state.cards.map(c=>'card:'+c.id)];
+
+// ---------- splitting a bill with other people ----------
+// The full amount goes on the card; only your share (plus anyone marked "not paying") counts against your budget.
+function cleanSplit(sp){
+  if(!sp || !Array.isArray(sp.people) || !sp.people.length) return null;
+  return { n: sp.n==='custom' ? 'custom' : Math.max(2, Math.round(num(sp.n)) || 2),
+    people: sp.people.filter(Boolean).map(x => ({ id:String(x.id||uid()), name:String(x.name||'').trim(), amount:r2(Math.max(0, num(x.amount))),
+      status: ['owed','paid','nopay'].includes(x.status) ? x.status : 'owed', date: isoOk(x.date) ? x.date : null })) };
+}
+const othersOf = e => e.split ? r2(e.split.people.filter(x=>x.status!=='nopay').reduce((t,x)=>t+x.amount, 0)) : 0;
+const ownRatio = e => e.split && e.amount > 0 ? Math.max(0, Math.min(1, (e.amount - othersOf(e)) / e.amount)) : 1;
+const ownShare = e => r2(e.amount * ownRatio(e));
 
 function recalcOf(s){
   s.savings.balance = r2(num(s.savings.adj) + s.savings.log.reduce((t,e)=>t+e.amount,0));
@@ -627,13 +664,13 @@ function eachCharge(fn){
     const c = cardOf(e);
     if(c && e.months > 0){
       const first = closeFor(e.date, c);
-      for(let i=0;i<e.months;i++){ const cl = shiftClose(first,i,c); fn(e, slice(e,i), payFor(cl), c, cl); }
-    } else fn(e, e.amount, payFor(e.date), c, c ? closeFor(e.date, c) : null);
+      for(let i=0;i<e.months;i++){ const cl = shiftClose(first,i,c), a = slice(e,i); fn(e, a, payFor(cl), c, cl, r2(a*ownRatio(e))); }
+    } else fn(e, e.amount, payFor(e.date), c, c ? closeFor(e.date, c) : null, ownShare(e));
   }
 }
 function spentIn(p){
   const r = {need:0, want:0};
-  eachCharge((e,a,pp)=>{ if(pp===p) r[e.cat] = (r[e.cat]||0) + a; });
+  eachCharge((e,a,pp,c,cl,own)=>{ if(pp===p) r[e.cat] = (r[e.cat]||0) + own; });
   // payments toward a card's old balance count as an essential when that card is set up that way
   for(const cp of state.cardPays){ const c = cardById(cp.cardId); if(c && c.payNeed && inPay(cp.date,p)) r.need += cp.amount; }
   for(const k of Object.keys(r)) r[k] = r2(r[k]); return r;
@@ -685,6 +722,23 @@ function renderWelcome(){
       <li><b>Add your credit cards</b> on the <b>Cards</b> tab, and any goals under <b>Savings</b></li></ol>
     <div class="inline"><button class="btn green" style="flex:1;" data-tab="more">Set my payday</button><button class="btn ghost" data-action="welcomeDone">Got it</button></div></div>` : '');
 }
+let owedOpen = false;
+function owedSection(){
+  const owed = [], settled = [];
+  for(const e of state.expenses) if(e.split) for(const q of e.split.people){ const row = {e, q}; (q.status==='owed' ? owed : settled).push(row); }
+  if(!owed.length && !settled.length) return '';
+  const total = r2(owed.reduce((t,r)=>t+r.q.amount,0)), who = new Set(owed.map(r=>r.q.name||r.q.id)).size;
+  const recent = settled.filter(r => r.q.date && daysBetween(r.q.date, today()) <= 30).sort((a,b)=>b.q.date.localeCompare(a.q.date)).slice(0,8);
+  if(!owed.length && !recent.length) return '';
+  const key = r => `${esc(r.e.id)}|${esc(r.q.id)}`;
+  return `<details class="more owedbox" ${owedOpen?'open':''} id="owedDetails"><summary>${owed.length ? `Owed to you <b>${fmt(total)}</b> · ${who} ${who>1?'people':'person'}` : 'Owed to you · all settled'}</summary>
+    ${owed.sort((a,b)=>a.e.date.localeCompare(b.e.date)).map(r => `<div class="owerow"><div class="what"><b>${esc(r.q.name)||'Someone'}</b><small>${esc(r.e.desc)||'(no description)'} · ${shortWords(r.e.date)}</small></div>
+      <div class="mono">${fmt(r.q.amount)}</div><div class="owebtns"><button class="btn green" data-owepaid="${key(r)}">Paid back</button><button class="btn ghost" data-owenopay="${key(r)}">Not paying</button></div></div>`).join('')}
+    ${recent.length ? `<div class="lbl" style="margin-top:10px;">Settled</div>` + recent.map(r => `<div class="owerow done"><div class="what"><b>${esc(r.q.name)||'Someone'}</b><small>${esc(r.e.desc)||'(no description)'}</small></div>
+      <div class="mono">${fmt(r.q.amount)}</div><div class="owebtns"><span class="${r.q.status==='paid'?'ok':'bad'}" style="font-size:.78rem;font-weight:700;">${r.q.status==='paid'?'✓ Paid back':'Not paying'} ${shortWords(r.q.date)}</span><button class="linkbtn" data-oweundo="${key(r)}">Undo</button></div></div>`).join('') : ''}
+  </details>`;
+}
+document.addEventListener('toggle', e => { if(e.target && e.target.id==='owedDetails') owedOpen = e.target.open; }, true);
 function renderHome(){
   renderWelcome();
   const p = viewPay, c = caps(p), s = spentIn(p), isCur = p === curPay();
@@ -702,7 +756,8 @@ function renderHome(){
         ? bucket(esc(x.name), x.id==='need'?'need':x.id==='want'?'want':'spend', c[x.id], s[x.id]||0, 'Spent',
             x.id==='want' && isCur && wantLeft>0 ? `<div class="daily">About <b>${fmt(wantLeft/daysLeft)}</b> a day for ${daysLeft} more day${daysLeft>1?'s':''}.</div>` : '', x.color)
         : bucket(esc(x.name), 'save', c[x.id], savedIn(p, x.fill), 'Put away', '', x.color)).join('')}
-    ${P.some(x=>x.kind==='save') ? `<p class="hint">"Put away" counts what you added to ${P.filter(x=>x.kind==='save').map(x=>x.fill==='all'?'Savings and your goals':x.fill==='savings'?'Savings':((state.goals.find(g=>'goal:'+g.id===x.fill)||{}).name||'a goal')).filter((v,i,a)=>a.indexOf(v)===i).join(', ')} during this payday.</p>` : ''}`);
+    ${P.some(x=>x.kind==='save') ? `<p class="hint">"Put away" counts what you added to ${P.filter(x=>x.kind==='save').map(x=>x.fill==='all'?'Savings and your goals':x.fill==='savings'?'Savings':((state.goals.find(g=>'goal:'+g.id===x.fill)||{}).name||'a goal')).filter((v,i,a)=>a.indexOf(v)===i).join(', ')} during this payday.</p>` : ''}
+    ${owedSection()}`);
   renderHomeCards();
 }
 function renderHomeCards(){
@@ -732,7 +787,7 @@ function refreshForm(){
   $('instRow').style.display = c ? '' : 'none';
   $('instBox').style.display = c && $('eInst').checked ? '' : 'none';
   const d = $('eDate').value, amt = num($('eAmt').value);
-  if(!isoOk(d)){ $('lands').innerHTML = 'Pick a date.'; return; }
+  if(!isoOk(d)){ $('lands').innerHTML = 'Pick a date.'; renderSplit(); return; }
   const p = payFor(d), cat = esc((partById(formCat)||{name:'Essentials'}).name);
   if(c && $('eInst').checked){
     const n = Math.round(num($('eMonths').value)), mon = num($('eMonthly').value);
@@ -741,14 +796,49 @@ function refreshForm(){
     const first = closeFor(d,c), interest = mon>0 && amt>0 ? r2(mon*n - amt) : 0;
     $('lands').innerHTML = `<b>${each>0?fmt(each)+'/month':'Monthly payments'}</b> on ${n} ${esc(c.name)} statements, ${shortWords(first)} to ${words(shiftClose(first,n-1,c))}.`
       + (interest>0 ? ` That's <b>${fmt(interest)}</b> interest on top of the price.` : (interest<0 ? ` <span class="bad">The monthly amount × ${n} is less than the price. Check the figures.</span>` : ''))
-      + ` Each payment counts under <b>${cat}</b> in the payday its statement closes.`;
-    return;
+      + ` Each payment counts under <b>${cat}</b> in the payday its statement closes.` + splitNote(amt, c, cat);
+    renderSplit(); return;
   }
   let html = `Counts under <b>${cat}</b> in your <b>${shortWords(p)} – ${shortWords(payEnd(p))}</b> payday.`;
   if(c){ const cl = closeFor(d,c); html += ` Goes on the <b>${words(cl)}</b> ${esc(c.name)} statement, due <b>${words(stmtDue(cl,c))}</b>.`; }
-  $('lands').innerHTML = html;
+  $('lands').innerHTML = html + splitNote(amt, c, cat);
+  renderSplit();
+}
+// split form state: kept while the box is closed, so ticking it again brings your names back
+let formSplit = null;
+const splitOn = () => $('eSplit').checked && formSplit;
+function splitAmounts(total){
+  if(!formSplit) return {mine: total, others: 0};
+  if(formSplit.n !== 'custom'){
+    const n = formSplit.n, each = Math.floor(total / n * 100) / 100;
+    while(formSplit.people.length < n-1) formSplit.people.push({id:uid(), name:'', amount:0, status:'owed', date:null});
+    formSplit.people.length = n-1; formSplit.people.forEach(x => x.amount = each);
+  }
+  const others = r2(formSplit.people.reduce((t,x)=>t+num(x.amount),0));
+  return {mine: r2(total - others), others};
+}
+function renderSplit(){
+  $('splitBox').style.display = $('eSplit').checked ? '' : 'none';
+  if(!$('eSplit').checked) return;
+  if(!formSplit) formSplit = {n:2, people:[]};
+  const total = r2(num($('eAmt').value)), {mine} = splitAmounts(total), custom = formSplit.n === 'custom';
+  $$('#splitN button').forEach(b => b.classList.toggle('on', String(formSplit.n) === b.dataset.splitn));
+  setLive('splitPeople', formSplit.people.map((x,i) => `<div class="inline sprow">
+      <input type="text" data-spname="${i}" value="${esc(x.name)}" placeholder="Person ${i+1}" aria-label="Name">
+      ${custom ? `<input type="number" inputmode="decimal" step="0.01" data-spamt="${i}" value="${x.amount||''}" placeholder="0.00" style="max-width:110px;" aria-label="Amount">
+        <button class="iconbtn" data-spdel="${i}" aria-label="Remove">✕</button>` : `<span class="mono">${fmt(x.amount)}</span>`}</div>`).join(''));
+  $('splitAdd').style.display = custom ? '' : 'none';
+  $('splitMine').textContent = fmt(mine); $('splitMine').classList.toggle('bad', mine < 0);
+}
+function refreshFormLandsOnly(){ const keep = document.activeElement; refreshForm(); if(keep && document.contains(keep)) keep.focus(); }
+function splitNote(amt, c, cat){
+  if(!splitOn() || !(amt > 0)) return '';
+  const {mine, others} = splitAmounts(amt);
+  if(mine < 0) return ` <span class="bad">The others' shares add up to more than ${fmt(amt)}.</span>`;
+  return `<br>${fmt(amt)} ${c ? `goes on your ${esc(c.name)} bill` : 'is what you paid'}. Only <b>${fmt(mine)}</b> counts against your ${cat}; <b>${fmt(others)}</b> is owed to you.`;
 }
 function resetForm(){
+  $('eSplit').checked = false; formSplit = null;
   const fc = $('formTitle') && $('formTitle').closest('.card'); if(fc) fc.classList.remove('editing');
   if($('editNote')) $('editNote').style.display = 'none';
   if(editingId){ editingId = null; setTimeout(renderList, 0); }
@@ -759,15 +849,16 @@ function resetForm(){
 }
 function expRow(e, p){
   const c = cardOf(e);
-  let amtShown = e.amount, sub = words(e.date);
+  let amtShown = ownShare(e), sub = words(e.date) + (e.split ? ` · ${fmt(e.amount)} total` : '');
   if(e.months>0){ const first = closeFor(e.date,c); let k=-1; for(let i=0;i<e.months;i++){ if(payFor(shiftClose(first,i,c))===p){ k=i; break; } }
-    if(k>=0){ amtShown = slice(e,k); sub += ` · payment ${k+1} of ${e.months}`; }
+    if(k>=0){ amtShown = r2(slice(e,k)*ownRatio(e)); sub += ` · payment ${k+1} of ${e.months}`; }
     else { amtShown = null; sub += ` · bought this payday, payments count from the ${shortWords(payFor(first))} payday`; } }
   const tags = methodTag(e.method)
     + (e.months>0 ? `<span class="tag cc">${e.months} mo · ${fmt(slice(e,0))}/mo${e.monthly && r2(e.monthly*e.months - e.amount)>0 ? ' · +'+fmt(r2(e.monthly*e.months-e.amount))+' interest':''}</span>` : '')
+    + (e.split ? `<span class="tag splittag">Split ${e.split.people.length+1} ways${e.split.people.some(x=>x.status==='owed') ? ' · '+fmt(e.split.people.filter(x=>x.status==='owed').reduce((t,x)=>t+x.amount,0))+' owed' : ''}</span>` : '')
     ;
   return `<div class="row ${editingId===e.id?'editing-row':''}"><div class="what"><b>${esc(e.desc)||'(no description)'}${editingId===e.id?' <span class="tag editing-tag">Editing</span>':''}</b><small>${sub}</small><div>${tags}</div></div>
-    <div class="amt" ${amtShown===null?'style="color:var(--ink-soft);font-weight:400;" title="Not counted in this payday"':''}>${amtShown===null ? fmt(instTotal(e)) : fmt(amtShown)}</div>
+    <div class="amt" ${amtShown===null?'style="color:var(--ink-soft);font-weight:400;" title="Not counted in this payday"':''}>${amtShown===null ? fmt(instTotal(e)) : fmt(amtShown)}${e.split && amtShown!==null ? '<small class="yours">your share</small>' : ''}</div>
     <button class="iconbtn" data-edit="${esc(e.id)}" aria-label="Edit">✎</button><button class="iconbtn" data-del="${esc(e.id)}" aria-label="Delete">✕</button></div>`;
 }
 function renderList(){
@@ -792,7 +883,7 @@ function renderList(){
 // ----- cards tab -----
 const expandedStmts = new Set();
 let editingCard = null;
-function chargeItems(){ const out=[]; eachCharge((e,a,pp,c,cl)=>{ out.push({e, a, c, cl, eff:(c && e.months>0) ? cl : e.date}); }); return out; }
+function chargeItems(){ const out=[]; eachCharge((e,a,pp,c,cl,own)=>{ out.push({e, a, own, c, cl, eff:(c && e.months>0) ? cl : e.date}); }); return out; }
 function paydaysIn(start, end){ const out=[]; let p = payFor(start); if(p < start) p = nextPay(p); for(; p <= end; p = nextPay(p)) out.push(p); return out; }
 // One bill cycle: the non-essential budget from every payday inside it, against the non-essentials spent in it.
 // Non-essentials paid some other way in the same window count too, so two cards never share one budget twice.
@@ -800,14 +891,15 @@ function paydaysIn(start, end){ const out=[]; let p = payFor(start); if(p < star
 function baseStats(c, cl){
   const start = stmtStart(cl,c), end = cl, pays = paydaysIn(start, end);
   const budget = r2(pays.reduce((s,p)=>s+caps(p).want, 0)), missing = pays.filter(p => incomeOf(p) <= 0);
-  let mineWant=0, mineNeed=0, otherWant=0, inst=0; const list=[], otherBy={}, mineBy={};
+  let mineWant=0, mineNeed=0, otherWant=0, inst=0, mineOwn=0, others=0; const list=[], otherBy={}, mineBy={};
   for(const it of chargeItems()){
-    if(it.c===c && it.cl===cl){ if(it.e.cat==='want') mineWant+=it.a; else mineNeed+=it.a; mineBy[it.e.cat] = (mineBy[it.e.cat]||0) + it.a; if(it.e.months>0) inst+=it.a; list.push(it); }
-    else if(it.e.cat==='want' && it.eff>=start && it.eff<=end){ otherWant+=it.a; otherBy[it.e.method] = (otherBy[it.e.method]||0) + it.a; }
+    if(it.c===c && it.cl===cl){ if(it.e.cat==='want'){ mineWant+=it.a; mineOwn+=it.own; } else mineNeed+=it.a; mineBy[it.e.cat] = (mineBy[it.e.cat]||0) + it.a;
+      others += it.a - it.own; if(it.e.months>0) inst+=it.a; list.push(it); }
+    else if(it.e.cat==='want' && it.eff>=start && it.eff<=end){ otherWant+=it.own; otherBy[it.e.method] = (otherBy[it.e.method]||0) + it.own; }
   }
-  mineWant=r2(mineWant); mineNeed=r2(mineNeed); otherWant=r2(otherWant);
-  const spent = r2(mineWant+otherWant);
-  return { start, end, due:stmtDue(cl,c), pays, missing, budget, mineWant, mineNeed, mineBy, otherWant, otherBy, spent, inst:r2(inst), total:r2(mineWant+mineNeed), left:r2(budget-spent), list };
+  mineWant=r2(mineWant); mineNeed=r2(mineNeed); otherWant=r2(otherWant); mineOwn=r2(mineOwn); others=r2(others);
+  const spent = r2(mineOwn+otherWant);
+  return { start, end, due:stmtDue(cl,c), pays, missing, budget, mineWant, mineNeed, mineBy, mineOwn, others, otherWant, otherBy, spent, inst:r2(inst), total:r2(mineWant+mineNeed), left:r2(budget-spent), list };
 }
 // Carry-over: non-essential budget a bill didn't use passes to the next bill (and an overspend passes on too).
 // It starts from the first bill you logged purchases on, so months you didn't log never pass on money that may not be there.
@@ -865,7 +957,8 @@ function stmtPanel(c, role, cl){
       <div class="bbig mono">${fmt(s.total)}</div>
       ${line('<span class="dim">Non-essentials</span>', fmt(s.mineWant))}
       ${parts().filter(x=>x.id!=='want' && (s.mineBy[x.id]||0)>0).map(x => line(`<span class="dim">${esc(x.name)}</span>`, fmt(s.mineBy[x.id]))).join('')}
-      ${Object.keys(s.mineBy).filter(k=>k!=='want' && !partById(k) && s.mineBy[k]>0).map(k => line('<span class="dim">Other</span>', fmt(s.mineBy[k]))).join('')}</div>`;
+      ${Object.keys(s.mineBy).filter(k=>k!=='want' && !partById(k) && s.mineBy[k]>0).map(k => line('<span class="dim">Other</span>', fmt(s.mineBy[k]))).join('')}
+      ${s.others>0 ? line('Others paying back', fmt(s.others), 'owedline') : ''}</div>`;
   // the budget: each salary, any carry-over, this card, then anything paid another way
   const salaries = s.pays.map(p => incomeOf(p) > 0 ? line(`${shortWords(p)} salary`, fmt(caps(p).want)) : line(`<span class="dim">${shortWords(p)} salary</span>`, '<span class="dim">—</span>')).join('')
     || line('<span class="dim">No paydays in this bill</span>', '');
@@ -877,7 +970,7 @@ function stmtPanel(c, role, cl){
   const budget = `<div class="bsec"><div class="bhead"><div class="blbl">Non-essential budget</div><div class="bstat ${st.cls}">${st.text}</div></div>
       ${salaries}${carry}
       ${s.carryIn !== 0 ? line('<b>Available</b>', `<b>${fmt(s.available)}</b>`, 'total') : ''}
-      ${line(`<span>${dot('card:'+c.id)}Spent on ${esc(c.name)}</span>`, '−' + fmt(s.mineWant))}
+      ${line(`<span>${dot('card:'+c.id)}Spent on ${esc(c.name)}${s.others>0?' (your shares)':''}</span>`, '−' + fmt(s.mineOwn))}
       ${other}</div>`;
   let extra = '';
   if(role==='paying'){
@@ -1052,6 +1145,7 @@ function removeSav(id){ const sv=state.savings, i=sv.log.findIndex(x=>x.id===id)
 // ===================== events =====================
 $('incomeBox').addEventListener('input', e => { (state.paydays[viewPay] = state.paydays[viewPay] || {income:0}).income = r2(num(e.target.value)); save(); renderHome(); renderList(); });
 ['eDate','eAmt','eInst','eMonths','eMonthly'].forEach(id => { $(id).addEventListener('input', refreshForm); $(id).addEventListener('change', refreshForm); });
+$('eSplit').addEventListener('change', () => { if($('eSplit').checked && !formSplit) formSplit = {n:2, people:[]}; refreshForm(); });
 $('eDate').addEventListener('click', e => { try{ e.target.showPicker && e.target.showPicker(); }catch(_){} });
 $('cancelEdit').addEventListener('click', resetForm);
 $('saveExp').addEventListener('click', () => {
@@ -1061,7 +1155,13 @@ $('saveExp').addEventListener('click', () => {
   const c = formMethod.startsWith('card:') ? cardById(formMethod.slice(5)) : null;
   const months = c && $('eInst').checked ? Math.max(2, Math.round(num($('eMonths').value))) : 0;
   const monthly = months>0 && num($('eMonthly').value)>0 ? r2(num($('eMonthly').value)) : null;
-  const rec = { date, desc, amount, cat:formCat, method:formMethod, months, monthly };
+  let split = null;
+  if(splitOn()){ const {mine} = splitAmounts(amount);
+    if(mine < 0){ toast("The others' shares add up to more than the total."); return; }
+    const prev = editingId ? ((state.expenses.find(z=>z.id===editingId)||{}).split || {people:[]}).people : [];
+    split = cleanSplit({ n: formSplit.n, people: formSplit.people.filter(x=>num(x.amount)>0).map(x => { const old = prev.find(o=>o.id===x.id);
+      return {...x, status: old ? old.status : 'owed', date: old ? old.date : null}; }) }); }
+  const rec = { date, desc, amount, cat:formCat, method:formMethod, months, monthly, split };
   if(editingId){ const x = state.expenses.find(z=>z.id===editingId); if(x) Object.assign(x, rec); toast('Saved.'); }
   else { state.expenses.push({id:uid(), ...rec}); toast(c ? `Added. On the ${shortWords(closeFor(date,c))} ${c.name} statement.` : 'Added.'); }
   save(); resetForm(); refresh();
@@ -1073,12 +1173,12 @@ function savManual(sign){ const v=r2(num($('savAmt').value)); if(!(v>0)){ toast(
   save(); refresh(); toast(`${sign>0?'Added':'Took out'} ${fmt(v)}`); }
 $('savBalance').addEventListener('input', e => { state.savings.adj = r2(num(e.target.value) - state.savings.log.reduce((t,x)=>t+x.amount,0)); save(); renderSavings(); });
 
-function applySettings(){ const st=S();
+function applySettings(){ const st=S(), wasCur = viewPay === curPay();
   st.every=Math.min(31,Math.max(7,Math.round(num($('sEvery').value))||st.every)); if(isoOk($('sAnchor').value)) st.anchor=$('sAnchor').value;
   const dom = (id, cur) => Math.min(31, Math.max(1, Math.round(num($(id).value)) || cur));
   st.day1 = dom('sDay1', st.day1); st.day2 = dom('sDay2', st.day2); st.mday = dom('sMday', st.mday);
   if(st.day1 > st.day2) [st.day1, st.day2] = [st.day2, st.day1];
-  viewPay=payFor(viewPay); save(); renderAll(); }
+  viewPay = wasCur ? curPay() : payFor(viewPay); save(); renderAll(); }   // stay on the current payday if that's where you were
 ['sEvery','sAnchor','sDay1','sDay2','sMday'].forEach(id => $(id).addEventListener('change', applySettings));
 $('sAnchor').addEventListener('input', () => $('sAnchorWords').textContent = words($('sAnchor').value));
 
@@ -1087,6 +1187,8 @@ document.addEventListener('input', e => {
   const t = e.target, d = t.dataset || {};
   const g = id => state.goals.find(x=>x.id===id);
   if(d.cname){ const c=cardById(d.cname); if(c){ c.name = t.value.trim() || c.name; if(!c.colorPicked) c.color = brandColor(c.name, state.cards.indexOf(c)); save(); renderMethodChips(); refreshForm(); renderHome(); renderList(); } }
+  else if(d.spname !== undefined && formSplit){ const q = formSplit.people[Number(d.spname)]; if(q) q.name = t.value; }
+  else if(d.spamt !== undefined && formSplit){ const q = formSplit.people[Number(d.spamt)]; if(q){ q.amount = r2(Math.max(0, num(t.value))); refreshFormLandsOnly(); } }
   else if(d.ptname){ const x=partById(d.ptname); if(x){ x.name = t.value.trim() || x.name; save(); renderHome(); renderList(); refreshForm(); } }
   else if(d.ptpct){ const x=partById(d.ptpct); if(x){ x.pct = Math.min(100, Math.max(0, r2(num(t.value)))); S().need = partById('need').pct; S().want = partById('want').pct;
       S().save = r2(parts().filter(y=>y.id!=='need'&&y.id!=='want').reduce((q,y)=>q+y.pct,0)); save(); syncTotalsOnly(); renderHome(); renderList(); renderCards(); } }
@@ -1110,7 +1212,7 @@ document.addEventListener('change', e => { const t=e.target, d=t.dataset||{};
 });
 
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-ptkind],[data-ptdel],[data-pmcolor],[data-cardcolor],[data-pmdel],[data-paytype],[data-tab],[data-pay-nav],[data-cat],[data-method],[data-edit],[data-del],[data-paycard],[data-payrest],[data-expand],[data-collapse],[data-cardedit],[data-carddone],[data-cpsave],[data-cpdel],[data-cpfixsave],[data-savdel],[data-gacct],[data-gadd],[data-gout],[data-gldel],[data-goaledit],[data-goaldone],[data-aadd],[data-adel],[data-gdel],[data-cdel],[data-action],[data-theme-set]');
+  const el = e.target.closest('[data-splitn],[data-spdel],[data-owepaid],[data-owenopay],[data-oweundo],[data-ptkind],[data-ptdel],[data-pmcolor],[data-cardcolor],[data-pmdel],[data-paytype],[data-tab],[data-pay-nav],[data-cat],[data-method],[data-edit],[data-del],[data-paycard],[data-payrest],[data-expand],[data-collapse],[data-cardedit],[data-carddone],[data-cpsave],[data-cpdel],[data-cpfixsave],[data-savdel],[data-gacct],[data-gadd],[data-gout],[data-gldel],[data-goaledit],[data-goaldone],[data-aadd],[data-adel],[data-gdel],[data-cdel],[data-action],[data-theme-set]');
   if(!el) return; const d = el.dataset;
   if(d.tab){ showTab(d.tab); return; }
   if(d.payNav){ const k=Number(d.payNav); const np = k>0 ? nextPay(viewPay) : prevPay(viewPay); if(k>0 && viewPay>=nextPay(curPay())) return; viewPay=np; renderPeriod(); renderHome(); renderList(); return; }
@@ -1132,12 +1234,23 @@ document.addEventListener('click', async e => {
     if(await ask(`Remove ${a.name}?${used ? ` Expenses paid with it will change to Cash.` : ''}`, [{label:'Remove', cls:'danger'},{label:'Cancel', cls:'ghost'}])!==0) return;
     state.accounts = state.accounts.filter(x=>x.id!==a.id); state.expenses.forEach(x=>{ if(x.method==='acct:'+a.id) x.method='cash'; });
     if(formMethod==='acct:'+a.id) formMethod=null; save(); renderAll(); return; }
-  if(d.paytype){ S().payType = d.paytype; viewPay = payFor(viewPay); save(); renderAll(); return; }
+  if(d.splitn){ if(!formSplit) formSplit = {n:2, people:[]}; const was = formSplit.n;
+    formSplit.n = d.splitn==='custom' ? 'custom' : Number(d.splitn);
+    if(formSplit.n==='custom' && was!=='custom' && !formSplit.people.length) formSplit.people.push({id:uid(), name:'', amount:0, status:'owed', date:null});
+    refreshForm(); return; }
+  if(d.spdel !== undefined && d.spdel !== ''){ if(formSplit){ formSplit.people.splice(Number(d.spdel),1); refreshForm(); } return; }
+  if(d.owepaid || d.owenopay || d.oweundo){ const [eid, pid] = (d.owepaid||d.owenopay||d.oweundo).split('|'), x = state.expenses.find(z=>z.id===eid), who = x && x.split && x.split.people.find(q=>q.id===pid);
+    if(!who) return;
+    if(d.owenopay && await ask(`Mark ${who.name || 'this person'}'s ${fmt(who.amount)} as not paying you back? It will count as your own spending.`, [{label:'Not paying', cls:'danger'},{label:'Cancel', cls:'ghost'}])!==0) return;
+    who.status = d.owepaid ? 'paid' : d.owenopay ? 'nopay' : 'owed'; who.date = d.oweundo ? null : today();
+    save(); refresh(); return; }
+  if(d.paytype){ const wasCur = viewPay === curPay(); S().payType = d.paytype; viewPay = wasCur ? curPay() : payFor(viewPay); save(); renderAll(); return; }
   if(d.cat){ formCat=d.cat; refreshForm(); return; }
   if(d.method){ formMethod=d.method; refreshForm(); return; }
   if(d.edit){ const x=state.expenses.find(z=>z.id===d.edit); if(!x) return; editingId=x.id;
     $('eDate').value=x.date; $('eDesc').value=x.desc; $('eAmt').value=x.amount; formCat=x.cat; formMethod=x.method;
     $('eInst').checked=x.months>0; if(x.months>0) $('eMonths').value=String(x.months); $('eMonthly').value = x.monthly || '';
+    $('eSplit').checked = !!x.split; formSplit = x.split ? JSON.parse(JSON.stringify(x.split)) : null;
     $('formTitle').textContent='Edit expense'; $('saveExp').textContent='Save changes'; $('cancelEdit').style.display=''; $('editNote').style.display='';
     renderMethodChips(); refreshForm(); renderList();
     // make it obvious: switch to Spend, bring the form to the middle of the screen and highlight it
@@ -1204,6 +1317,8 @@ document.addEventListener('click', async e => {
       setTimeout(()=>{ const n=document.querySelector(`[data-gname="${g.id}"]`); if(n){ n.focus(); n.select(); } },50); break; }
     case 'addCard': { const nc={id:uid(), name:'New card', close:15, due:19, start:0, payNeed:false, color:PALETTE[(state.cards.length+1) % PALETTE.length], colorPicked:false}; state.cards.push(nc); editingCard=nc.id; save(); renderAll();
       setTimeout(()=>{ const n=document.querySelector(`[data-cname="${nc.id}"]`); if(n){ n.scrollIntoView({block:'center'}); n.focus({preventScroll:true}); n.select(); } },60); break; }
+    case 'splitAdd': if(formSplit){ formSplit.people.push({id:uid(), name:'', amount:0, status:'owed', date:null}); refreshForm();
+      setTimeout(()=>{ const n=document.querySelector(`[data-spname="${formSplit.people.length-1}"]`); if(n) n.focus(); },50); } break;
     case 'addPart': { const used = new Set(parts().map(x=>x.color)); const col = PALETTE.find(x=>!used.has(x)) || PALETTE[parts().length % PALETTE.length];
       const np = {id:uid(), name:'New part', pct:0, kind:'spend', fill:'all', color:col}; S().parts.push(np); save(); renderAll();
       setTimeout(()=>{ const n=document.querySelector(`[data-ptname="${np.id}"]`); if(n){ n.focus(); n.select(); } },50); break; }
@@ -1258,7 +1373,7 @@ setInterval(dayCheck, 60000);
 // secret gist on your GitHub. Each record carries the time it last changed; when devices differ, the newest
 // version of each record wins and deletions carry over.
 let API = 'https://api.github.com';
-const SCHEMA = 3;   // raise when the saved format changes, so an older copy of the app pauses syncing instead of mixing formats
+const SCHEMA = 4;   // raise when the saved format changes, so an older copy of the app pauses syncing instead of mixing formats
 const SYNC_KEY = 'financial:sync', GIST_DESC = 'Financial tracker sync (encrypted)', GIST_FILE = 'financial-sync.json';
 let sync = null; try{ sync = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null'); }catch(_){ sync = null; }
 let syncBusy = false, syncAgain = false, syncTimer = null, lastSyncAt = null, syncState = 'off', syncDetail = '', lastRec = null;
