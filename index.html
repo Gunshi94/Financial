@@ -213,9 +213,13 @@
   .sprow{margin-top:6px;} .sprow input[type=text]{flex:1; min-width:0;} .sprow .mono{white-space:nowrap; font-weight:600;}
   .split-you{border-top:1px dashed var(--rule); margin-top:10px; padding-top:8px; font-size:.9rem;}
   .split-you .mono{color:var(--green);} .split-you .mono.bad{color:var(--red);}
-  .tag.splittag{background:var(--slate-soft, #E2E7EC); color:var(--ink);}
-  :root[data-theme="dark"] .tag.splittag{background:#26303A; color:#B8C4D0;}
-  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .tag.splittag{background:#26303A; color:#B8C4D0;} }
+  .tag.splittag{background:#E2E7EC; color:var(--ink); border:none; font:inherit; font-size:.68rem; font-weight:700; cursor:pointer; line-height:1.5;}
+  .tag.splittag.done{background:var(--green-soft); color:var(--green);}
+  .splitnames{font-size:.78rem; margin-top:6px; padding-top:5px; border-top:1px dashed var(--rule); line-height:1.6;}
+  .splitnames .p{color:var(--green); font-weight:600;} .splitnames .u{color:var(--gold); font-weight:600;} .splitnames .n{color:var(--red);}
+  .splitnames .linkbtn{display:block; margin-top:2px; font-size:.78rem;}
+  :root[data-theme="dark"] .tag.splittag:not(.done){background:#26303A; color:#B8C4D0;}
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .tag.splittag:not(.done){background:#26303A; color:#B8C4D0;} }
   .amt small.yours{display:block; font-size:.66rem; font-weight:500; color:var(--ink-soft); text-align:right;}
   .bl.owedline{color:var(--slate);}
   .owedbox{margin-top:12px;}
@@ -505,12 +509,14 @@ function normalize(s){
     {id:'save', name:'Savings', pct:st.save, kind:'save', fill:'all'}];
   st.parts = rawParts.filter(Boolean).map((x,i) => ({ id:String(x.id||uid()), name:String(x.name||'Part').trim()||'Part',
     pct:Math.min(100, Math.max(0, r2(num(x.pct)))), kind: x.id==='need'||x.id==='want' ? 'spend' : (x.kind==='save' ? 'save' : 'spend'),
-    fill: typeof x.fill==='string' && x.fill ? x.fill : 'all', color: okColor(x.color) || PART_COLORS[x.id] || PALETTE[(i+3) % PALETTE.length] }));
+    fill: typeof x.fill==='string' && x.fill ? x.fill : 'all', color: okColor(x.color) || PART_COLORS[x.id] || PALETTE[(i+3) % PALETTE.length],
+    mode: x.mode==='fixed' && x.id!=='need' && x.id!=='want' ? 'fixed' : 'pct', amount: r2(Math.max(0, num(x.amount))), from: String(x.from||'need') }));
+  for(const x of st.parts) if(x.mode==='fixed' && !st.parts.some(y=>y.id===x.from && y.mode==='pct')) x.from = 'need';
   for(const [id, name] of [['need','Essentials'],['want','Non-essentials']]) if(!st.parts.some(x=>x.id===id)) st.parts.unshift({id, name, pct:0, kind:'spend', fill:'all', color:PART_COLORS[id]});
   st.parts.sort((a,b) => (a.id==='need'?0:a.id==='want'?1:2) - (b.id==='need'?0:b.id==='want'?1:2));
   // older copies of the app read these three numbers
   st.need = st.parts.find(x=>x.id==='need').pct; st.want = st.parts.find(x=>x.id==='want').pct;
-  st.save = r2(st.parts.filter(x=>x.id!=='need' && x.id!=='want').reduce((t,x)=>t+x.pct,0));
+  st.save = r2(st.parts.filter(x=>x.id!=='need' && x.id!=='want' && x.mode!=='fixed').reduce((t,x)=>t+x.pct,0));
   const spendIds = new Set(st.parts.filter(x=>x.kind==='spend').map(x=>x.id));
   st.every = Math.min(31, Math.max(7, Math.round(num(st.every)) || 14));
   if(!isoOk(st.anchor)) st.anchor = d.settings.anchor;
@@ -641,7 +647,14 @@ const parts = () => S().parts || (S().parts = normalize({settings:S()}).settings
 const partById = id => S().parts.find(x=>x.id===id);
 const spendParts = () => S().parts.filter(x=>x.kind==='spend');
 // each part's share of a payday's take-home pay, by part id (need = Essentials, want = Non-essentials)
-const caps = p => { const i = incomeOf(p), o = {}; for(const x of S().parts) o[x.id] = r2(i*x.pct/100); return o; };
+// Percentage parts split the pay; a fixed part (like Groceries ₱3,000) then comes out of the part it's taken from.
+const caps = p => { const i = incomeOf(p), o = {}, P = S().parts;
+  for(const x of P) o[x.id] = x.mode==='fixed' ? 0 : r2(i*x.pct/100);
+  if(i > 0) for(const x of P) if(x.mode==='fixed'){ const from = o[x.from] !== undefined ? x.from : 'need', take = Math.min(x.amount, Math.max(0, o[from]));
+    o[x.id] = r2(take); o[from] = r2(o[from] - take); }
+  return o; };
+const fmt0 = v => '₱' + Math.round(v).toLocaleString('en-PH');
+const fixedFrom = id => S().parts.filter(x => x.mode==='fixed' && x.from===id);
 const curPay = () => payFor(today());
 let viewPay = null;
 
@@ -744,7 +757,7 @@ function renderHome(){
   const p = viewPay, c = caps(p), s = spentIn(p), isCur = p === curPay();
   const P = parts();
   setLive('splitTiles', `<div class="split3 ${P.length>3?'many':''}" style="--n:${Math.min(P.length,6)}">` + P.map(x =>
-    `<div class="tile" style="background:${x.color};color:${onColor(x.color)}"><small>${esc(x.name)} ${x.pct}%</small><b>${fmt(c[x.id])}</b></div>`).join('') + `</div>`);
+    `<div class="tile" style="background:${x.color};color:${onColor(x.color)}"><small>${esc(x.name)} ${x.mode==='fixed' ? fmt0(x.amount) : x.pct+'%'}${fixedFrom(x.id).length ? ' − '+fixedFrom(x.id).map(f=>esc(f.name)).join(', ') : ''}</small><b>${fmt(c[x.id])}</b></div>`).join('') + `</div>`);
   const daysLeft = isCur ? Math.max(1, daysBetween(today(), payEnd(p)) + 1) : 0;
   const bucket = (name, cls, cap, used, verb, extra='', color='') => `<div class="bucket"><div class="bh"><b>${name}</b><span>${fmt(cap)}</span></div>
     <div class="meter"><div class="fill ${cls!=='save' && used>cap ? 'over' : cls}" style="width:${pct(used,cap)}%;${color && !(cls!=='save' && used>cap) ? 'background:'+color : ''}"></div></div>
@@ -847,6 +860,19 @@ function resetForm(){
   $('formTitle').textContent='Log an expense'; $('saveExp').textContent='Add expense'; $('cancelEdit').style.display='none';
   renderMethodChips(); refreshForm();
 }
+// Split status on a row: a count you can tap to see who's paid, with a shortcut to edit the amounts.
+const splitOpen = new Set();
+function splitTag(e){
+  const P = e.split.people, paid = P.filter(x=>x.status==='paid').length, owed = P.filter(x=>x.status==='owed').length, open = splitOpen.has(e.id);
+  const label = owed===0 ? (paid===P.length ? '✓ All paid back' : '✓ Settled') : `${paid} of ${P.length} paid ${open?'▴':'▾'}`;
+  return `<button class="tag splittag ${owed===0?'done':''}" data-splitview="${esc(e.id)}" aria-expanded="${open}">${label}</button>`;
+}
+function splitNames(e){
+  if(!e.split || !splitOpen.has(e.id)) return '';
+  return `<div class="splitnames">${e.split.people.map((x,i) => { const n = esc(x.name) || `Person ${i+1}`;
+      return x.status==='paid' ? `<span class="p">${n} ✓</span>` : x.status==='nopay' ? `<span class="n">${n} · not paying</span>` : `<span class="u">${n} · ${fmt(x.amount)} owed</span>`; }).join(' · ')}
+    <button class="linkbtn" data-edit="${esc(e.id)}">Edit amounts</button></div>`;
+}
 function expRow(e, p){
   const c = cardOf(e);
   let amtShown = ownShare(e), sub = words(e.date) + (e.split ? ` · ${fmt(e.amount)} total` : '');
@@ -855,9 +881,9 @@ function expRow(e, p){
     else { amtShown = null; sub += ` · bought this payday, payments count from the ${shortWords(payFor(first))} payday`; } }
   const tags = methodTag(e.method)
     + (e.months>0 ? `<span class="tag cc">${e.months} mo · ${fmt(slice(e,0))}/mo${e.monthly && r2(e.monthly*e.months - e.amount)>0 ? ' · +'+fmt(r2(e.monthly*e.months-e.amount))+' interest':''}</span>` : '')
-    + (e.split ? `<span class="tag splittag">Split ${e.split.people.length+1} ways${e.split.people.some(x=>x.status==='owed') ? ' · '+fmt(e.split.people.filter(x=>x.status==='owed').reduce((t,x)=>t+x.amount,0))+' owed' : ''}</span>` : '')
+    + (e.split ? splitTag(e) : '')
     ;
-  return `<div class="row ${editingId===e.id?'editing-row':''}"><div class="what"><b>${esc(e.desc)||'(no description)'}${editingId===e.id?' <span class="tag editing-tag">Editing</span>':''}</b><small>${sub}</small><div>${tags}</div></div>
+  return `<div class="row ${editingId===e.id?'editing-row':''}"><div class="what"><b>${esc(e.desc)||'(no description)'}${editingId===e.id?' <span class="tag editing-tag">Editing</span>':''}</b><small>${sub}</small><div>${tags}</div>${splitNames(e)}</div>
     <div class="amt" ${amtShown===null?'style="color:var(--ink-soft);font-weight:400;" title="Not counted in this payday"':''}>${amtShown===null ? fmt(instTotal(e)) : fmt(amtShown)}${e.split && amtShown!==null ? '<small class="yours">your share</small>' : ''}</div>
     <button class="iconbtn" data-edit="${esc(e.id)}" aria-label="Edit">✎</button><button class="iconbtn" data-del="${esc(e.id)}" aria-label="Delete">✕</button></div>`;
 }
@@ -1087,14 +1113,17 @@ function renderParts(){
     const locked = x.id==='need' || x.id==='want';
     return `<div class="pmrow"><div class="inline"><span class="cdot" style="background:${x.color};margin:0;"></span>
       <input type="text" data-ptname="${esc(x.id)}" value="${esc(x.name)}" aria-label="Name">
-      <input type="number" inputmode="decimal" data-ptpct="${esc(x.id)}" value="${x.pct}" style="max-width:76px;" aria-label="Percent"><span>%</span>
+      ${x.mode==='fixed' ? `<span>₱</span><input type="number" inputmode="decimal" step="0.01" data-ptamt="${esc(x.id)}" value="${x.amount||''}" placeholder="0.00" style="max-width:110px;" aria-label="Amount">`
+        : `<input type="number" inputmode="decimal" data-ptpct="${esc(x.id)}" value="${x.pct}" style="max-width:76px;" aria-label="Percent"><span>%</span>`}
       ${locked ? '' : `<button class="iconbtn" data-ptdel="${esc(x.id)}" aria-label="Remove">✕</button>`}</div>
       ${locked ? `<div class="hint" style="margin-top:4px;">Spending${x.id==='want' ? ' · used for your card budgets' : ' · always kept'}</div>`
-        : `<div class="chips ptkind"><button data-ptkind="${esc(x.id)}|spend" class="${x.kind==='spend'?'on':''}">Spending</button><button data-ptkind="${esc(x.id)}|save" class="${x.kind==='save'?'on':''}">Setting aside</button></div>
+        : `<div class="chips ptkind"><button data-ptmode="${esc(x.id)}|pct" class="${x.mode!=='fixed'?'on':''}">Percent</button><button data-ptmode="${esc(x.id)}|fixed" class="${x.mode==='fixed'?'on':''}">Fixed amount</button></div>
+           ${x.mode==='fixed' ? `<label class="f" style="margin-top:6px;">Comes out of<select data-ptfrom="${esc(x.id)}">${parts().filter(y=>y.mode!=='fixed').map(y=>`<option value="${esc(y.id)}" ${x.from===y.id?'selected':''}>${esc(y.name)}</option>`).join('')}</select></label>` : ''}
+           <div class="chips ptkind"><button data-ptkind="${esc(x.id)}|spend" class="${x.kind==='spend'?'on':''}">Spending</button><button data-ptkind="${esc(x.id)}|save" class="${x.kind==='save'?'on':''}">Setting aside</button></div>
            ${x.kind==='save' ? `<label class="f" style="margin-top:6px;">Fills from<select data-ptfill="${esc(x.id)}">${fillOptions(x)}</select></label>` : ''}`}
     </div>`; }).join(''));
 }
-function syncTotalsOnly(){ const tot = r2(parts().reduce((t,x)=>t+x.pct,0)), okTot = Math.abs(tot-100) < .001;
+function syncTotalsOnly(){ const tot = r2(parts().filter(x=>x.mode!=='fixed').reduce((t,x)=>t+x.pct,0)), okTot = Math.abs(tot-100) < .001;
   $('splitWarn').className = 'ptotal ' + (okTot ? 'ok' : 'bad'); $('splitWarn').innerHTML = `<span>Total</span><span class="mono">${tot}%${okTot ? ' ✓' : ' · should be 100%'}</span>`; }
 function syncSettings(){
   renderAccounts();
@@ -1109,7 +1138,7 @@ function syncSettings(){
     $('payHint').innerHTML = `Next paydays: <b>${ups.join(', ')}</b>.` + (st.payType==='every' ? '' : ' A day past the end of a month counts as its last day, so 31 means "last day of the month".')
       + ' Changing your schedule doesn\'t move pay you\'ve already entered.'; }
   $('sAnchorWords').textContent = words(st.anchor);
-  const tot = r2(st.parts.reduce((t,x)=>t+x.pct,0)), okTot = Math.abs(tot-100) < .001;
+  const tot = r2(st.parts.filter(x=>x.mode!=='fixed').reduce((t,x)=>t+x.pct,0)), okTot = Math.abs(tot-100) < .001;
   $('splitWarn').className = 'ptotal ' + (okTot ? 'ok' : 'bad');
   $('splitWarn').innerHTML = `<span>Total</span><span class="mono">${tot}%${okTot ? ' ✓' : ' · should be 100%'}</span>`;
 }
@@ -1190,6 +1219,7 @@ document.addEventListener('input', e => {
   else if(d.spname !== undefined && formSplit){ const q = formSplit.people[Number(d.spname)]; if(q) q.name = t.value; }
   else if(d.spamt !== undefined && formSplit){ const q = formSplit.people[Number(d.spamt)]; if(q){ q.amount = r2(Math.max(0, num(t.value))); refreshFormLandsOnly(); } }
   else if(d.ptname){ const x=partById(d.ptname); if(x){ x.name = t.value.trim() || x.name; save(); renderHome(); renderList(); refreshForm(); } }
+  else if(d.ptamt){ const x=partById(d.ptamt); if(x){ x.amount = r2(Math.max(0, num(t.value))); save(); renderHome(); renderList(); renderCards(); } }
   else if(d.ptpct){ const x=partById(d.ptpct); if(x){ x.pct = Math.min(100, Math.max(0, r2(num(t.value)))); S().need = partById('need').pct; S().want = partById('want').pct;
       S().save = r2(parts().filter(y=>y.id!=='need'&&y.id!=='want').reduce((q,y)=>q+y.pct,0)); save(); syncTotalsOnly(); renderHome(); renderList(); renderCards(); } }
   else if(d.pmname){ const a=state.accounts.find(x=>x.id===d.pmname); if(a){ a.name = t.value.trim() || a.name; if(!a.colorPicked) a.color = brandColor(a.name, state.accounts.indexOf(a)); save(); renderMethodChips(); refreshForm(); renderList(); } }
@@ -1204,7 +1234,8 @@ document.addEventListener('input', e => {
   else if(d.aamt){ const [gi,ai]=d.aamt.split(':'), x=g(gi), a=x&&x.accounts.find(z=>z.id===ai); if(a){ a.adj = r2(num(t.value) - state.goalLog.filter(e=>e.goalId===x.id && e.acctId===a.id).reduce((s2,e)=>s2+e.amount,0)); save(); } }
 });
 document.addEventListener('change', e => { const t=e.target, d=t.dataset||{};
-  if(d.ptfill){ const x=partById(d.ptfill); if(x){ x.fill = t.value; save(); renderHome(); } }
+  if(d.ptfrom){ const x=partById(d.ptfrom); if(x){ x.from = t.value; save(); renderHome(); renderList(); renderCards(); } }
+  else if(d.ptfill){ const x=partById(d.ptfill); if(x){ x.fill = t.value; save(); renderHome(); } }
   else if(d.cneed){ const c=cardById(d.cneed); if(c){ c.payNeed=t.checked; save(); refresh(); } }
   // while a card is being edited, leave its box alone so tapping the next field doesn't lose focus; Done redraws it
   else if(d.cname || d.cclose || d.cdue){ renderHome(); renderList(); renderMethodChips(); refreshForm();
@@ -1212,11 +1243,16 @@ document.addEventListener('change', e => { const t=e.target, d=t.dataset||{};
 });
 
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-splitn],[data-spdel],[data-owepaid],[data-owenopay],[data-oweundo],[data-ptkind],[data-ptdel],[data-pmcolor],[data-cardcolor],[data-pmdel],[data-paytype],[data-tab],[data-pay-nav],[data-cat],[data-method],[data-edit],[data-del],[data-paycard],[data-payrest],[data-expand],[data-collapse],[data-cardedit],[data-carddone],[data-cpsave],[data-cpdel],[data-cpfixsave],[data-savdel],[data-gacct],[data-gadd],[data-gout],[data-gldel],[data-goaledit],[data-goaldone],[data-aadd],[data-adel],[data-gdel],[data-cdel],[data-action],[data-theme-set]');
+  const el = e.target.closest('[data-splitview],[data-ptmode],[data-splitn],[data-spdel],[data-owepaid],[data-owenopay],[data-oweundo],[data-ptkind],[data-ptdel],[data-pmcolor],[data-cardcolor],[data-pmdel],[data-paytype],[data-tab],[data-pay-nav],[data-cat],[data-method],[data-edit],[data-del],[data-paycard],[data-payrest],[data-expand],[data-collapse],[data-cardedit],[data-carddone],[data-cpsave],[data-cpdel],[data-cpfixsave],[data-savdel],[data-gacct],[data-gadd],[data-gout],[data-gldel],[data-goaledit],[data-goaldone],[data-aadd],[data-adel],[data-gdel],[data-cdel],[data-action],[data-theme-set]');
   if(!el) return; const d = el.dataset;
   if(d.tab){ showTab(d.tab); return; }
   if(d.payNav){ const k=Number(d.payNav); const np = k>0 ? nextPay(viewPay) : prevPay(viewPay); if(k>0 && viewPay>=nextPay(curPay())) return; viewPay=np; renderPeriod(); renderHome(); renderList(); return; }
   if(d.themeSet){ setTheme(d.themeSet); return; }
+  if(d.splitview){ splitOpen.has(d.splitview) ? splitOpen.delete(d.splitview) : splitOpen.add(d.splitview); renderList(); return; }
+  if(d.ptmode){ const [id, mode] = d.ptmode.split('|'), x = partById(id); if(!x || x.mode===mode) return;
+    x.mode = mode; if(mode==='fixed' && !parts().some(y=>y.id===x.from && y.mode!=='fixed')) x.from = 'need';
+    S().save = r2(parts().filter(y=>y.id!=='need'&&y.id!=='want'&&y.mode!=='fixed').reduce((q,y)=>q+y.pct,0)); save(); renderAll();
+    if(mode==='fixed') setTimeout(()=>{ const n=document.querySelector(`[data-ptamt="${id}"]`); if(n) n.focus(); },50); return; }
   if(d.ptkind){ const [id, kind] = d.ptkind.split('|'), x = partById(id); if(!x || x.kind===kind) return;
     if(kind==='save'){ const n = state.expenses.filter(e=>e.cat===id).length;
       if(n && await ask(`${n} expense${n>1?'s are':' is'} logged under ${x.name}. Setting aside parts don't hold expenses, so ${n>1?'they':'it'} will move to Essentials.`, [{label:'Move and switch', cls:'danger'},{label:'Cancel', cls:'ghost'}])!==0) return;
@@ -1224,8 +1260,9 @@ document.addEventListener('click', async e => {
     x.kind = kind; save(); renderAll(); return; }
   if(d.ptdel){ const x = partById(d.ptdel); if(!x || x.id==='need' || x.id==='want') return;
     const n = state.expenses.filter(e=>e.cat===x.id).length;
-    if(await ask(`Remove ${x.name} (${x.pct}%)?${n ? ` Its ${n} expense${n>1?'s':''} will move to Essentials.` : ''} Remember to give its % to another part so they still add up to 100%.`, [{label:'Remove', cls:'danger'},{label:'Cancel', cls:'ghost'}])!==0) return;
+    if(await ask(`Remove ${x.name} (${x.mode==='fixed' ? fmt(x.amount) : x.pct+'%'})?${n ? ` Its ${n} expense${n>1?'s':''} will move to Essentials.` : ''} Remember to give its % to another part so they still add up to 100%.`, [{label:'Remove', cls:'danger'},{label:'Cancel', cls:'ghost'}])!==0) return;
     state.expenses.forEach(e=>{ if(e.cat===x.id) e.cat='need'; }); S().parts = parts().filter(y=>y.id!==x.id); if(formCat===x.id) formCat='need';
+    for(const y of parts()) if(y.mode==='fixed' && y.from===x.id) y.from = 'need';
     S().save = r2(parts().filter(y=>y.id!=='need'&&y.id!=='want').reduce((q,y)=>q+y.pct,0)); save(); renderAll(); return; }
   if(d.pmcolor){ const [id, col] = d.pmcolor.split('|'), a = state.accounts.find(x=>x.id===id); if(a && okColor(col)){ a.color = col; a.colorPicked = true; save(); renderAccounts(); renderMethodChips(); refreshForm(); renderList(); } return; }
   if(d.cardcolor){ const [id, col] = d.cardcolor.split('|'), cd = cardById(id); if(cd && okColor(col)){ cd.color = col; cd.colorPicked = true; save(); renderMethodChips(); refreshForm(); refresh(); } return; }
@@ -1373,7 +1410,7 @@ setInterval(dayCheck, 60000);
 // secret gist on your GitHub. Each record carries the time it last changed; when devices differ, the newest
 // version of each record wins and deletions carry over.
 let API = 'https://api.github.com';
-const SCHEMA = 4;   // raise when the saved format changes, so an older copy of the app pauses syncing instead of mixing formats
+const SCHEMA = 5;   // raise when the saved format changes, so an older copy of the app pauses syncing instead of mixing formats
 const SYNC_KEY = 'financial:sync', GIST_DESC = 'Financial tracker sync (encrypted)', GIST_FILE = 'financial-sync.json';
 let sync = null; try{ sync = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null'); }catch(_){ sync = null; }
 let syncBusy = false, syncAgain = false, syncTimer = null, lastSyncAt = null, syncState = 'off', syncDetail = '', lastRec = null;
