@@ -205,6 +205,7 @@
   .split3{grid-template-columns:repeat(var(--n,3),1fr);}
   @media (max-width:560px){ .split3.many{grid-template-columns:1fr 1fr;} }
   .tile small{opacity:.92;}
+  .split3:not(.many) .tile b{font-size:min(.95rem, 3.25vw);}   /* three tiles across a phone: shrink the amount so it stays on one line */
   .ptotal{display:flex; justify-content:space-between; font-size:.84rem; font-weight:700; margin:2px 2px 10px;}
   .ptotal.ok{color:var(--green);} .ptotal.bad{color:var(--red);}
   .ptkind{margin:8px 0 0;} .ptkind button{height:34px; font-size:.78rem;}
@@ -228,6 +229,13 @@
   .owerow .what small{display:block; color:var(--ink-soft); font-size:.78rem; margin-top:1px;}
   .owebtns{grid-column:1 / -1; display:flex; gap:8px; align-items:center;}
   .owebtns .btn{height:34px; font-size:.78rem; padding:0 12px;}
+  .acctbar{display:flex; flex-direction:row; height:12px; border-radius:7px; overflow:hidden; margin:4px 0 8px; background:var(--rule);}
+  .acctbar i{display:block; height:100%; flex:none;}
+  .acctcard .bl{font-size:.86rem; padding:3px 0;}
+  .acctcard .bl.bad span{color:var(--red); font-weight:700;}
+  .hint.bad{color:var(--red);}
+  .carrybox{margin-top:8px;}
+  .bl.dim{color:var(--ink-soft);} .bl.dim .linkbtn{font-size:.78rem;}
   .theme-row{display:flex; gap:8px;}
   .theme-row button{flex:1; height:42px; border-radius:10px; border:1.5px solid var(--rule); background:var(--surface); color:var(--ink-soft); font-weight:600;}
   .theme-row button.on{background:var(--ink-bg); color:var(--on-dark); border-color:var(--ink-bg);}
@@ -373,6 +381,7 @@
   <section class="view" id="view-savings">
     <div class="grid2">
       <div>
+        <div id="acctLive"></div>
         <div class="card">
           <div id="savLive"></div>
           <h3>Add or take out</h3>
@@ -528,14 +537,15 @@ function normalize(s){
   o.paydays = {}; Object.entries((s&&s.paydays)||{}).forEach(([k,v]) => { if(isoOk(k)&&v) o.paydays[k] = {income:r2(num(v.income))}; });
   o.cards = ((s&&s.cards)||[]).filter(Boolean).map(c => ({ id:String(c.id||uid()), name:String(c.name||'Card').trim()||'Card',
     close:Math.min(28,Math.max(1,Math.round(num(c.close))||15)), due:Math.min(60,Math.max(1,Math.round(num(c.due))||19)),
-    start:r2(num(c.start)), payNeed:!!c.payNeed, color:okColor(c.color) || brandColor(c.name, 1), colorPicked:!!c.colorPicked }));
+    start:r2(num(c.start)), payNeed:!!c.payNeed, color:okColor(c.color) || brandColor(c.name, 1), colorPicked:!!c.colorPicked, payFrom:String(c.payFrom||'') }));
   const cardIds = new Set(o.cards.map(c=>c.id));
   // wallets and banks: start with GCash, Maya and Bank the first time
   const rawAcc = (s && Array.isArray(s.accounts)) ? s.accounts : DEFAULT_ACCOUNTS;
-  o.accounts = rawAcc.filter(Boolean).map((a,i) => ({ id:String(a.id||uid()), name:String(a.name||'Account').trim()||'Account', color:okColor(a.color) || brandColor(a.name, i), colorPicked:!!a.colorPicked }));
+  o.accounts = rawAcc.filter(Boolean).map((a,i) => ({ id:String(a.id||uid()), name:String(a.name||'Account').trim()||'Account', color:okColor(a.color) || brandColor(a.name, i), colorPicked:!!a.colorPicked,
+    track:!!a.track, adj:r2(num(a.adj)), balSet:!!a.balSet }));
   const accIds = new Set(o.accounts.map(a=>a.id));
   const needAcc = (id, name, color) => { if(!accIds.has(id)){ o.accounts.push({id, name, color, colorPicked:false}); accIds.add(id); } };
-  o.cardPays = ((s&&s.cardPays)||[]).filter(p=>p&&isoOk(p.date)&&cardIds.has(String(p.cardId))).map(p=>({id:String(p.id||uid()), cardId:String(p.cardId), date:p.date, amount:r2(num(p.amount)), fromSavings:!!p.fromSavings, note:String(p.note||'')}));
+  o.cardPays = ((s&&s.cardPays)||[]).filter(p=>p&&isoOk(p.date)&&cardIds.has(String(p.cardId))).map(p=>({id:String(p.id||uid()), cardId:String(p.cardId), date:p.date, amount:r2(num(p.amount)), fromSavings:!!p.fromSavings, acct:String(p.acct||''), note:String(p.note||'')}));
   o.expenses = ((s&&s.expenses)||[]).filter(e=>e&&isoOk(e.date)).map(e => {
     let m = String(e.method||'cash');
     if(m === 'debit'){ needAcc('bank','Bank','#4A5D70'); m = 'acct:bank'; }          // from before: "Debit" is now "Bank"
@@ -549,6 +559,7 @@ function normalize(s){
   o.savings = { adj:sv.adj, balance:r2(num(sv.balance)), log:(Array.isArray(sv.log)?sv.log:[]).filter(e=>e&&isFinite(num(e.amount))).map(e=>({id:String(e.id||uid()), date:isoOk(e.date)?e.date:today(), amount:r2(num(e.amount)), note:String(e.note||''), opening:!!e.opening, ref:e.ref||null})) };
   o.goals = ((s&&s.goals)||[]).filter(Boolean).map(g => ({ id:String(g.id||uid()), name:String(g.name||'Goal'), target:r2(num(g.target)),
     accounts:(Array.isArray(g.accounts)&&g.accounts.length?g.accounts:[{name:'Savings',amount:0}]).map(a=>({id:String(a.id||uid()), name:String(a.name||'Account'), amount:r2(num(a.amount)), adj:a.adj})) }));
+  o.acctLog = ((s&&s.acctLog)||[]).filter(e=>e&&isoOk(e.date)&&e.acct&&isFinite(num(e.amount))).map(e=>({id:String(e.id||uid()), date:e.date, acct:String(e.acct), amount:r2(num(e.amount)), note:String(e.note||'')}));
   o.goalLog = ((s&&s.goalLog)||[]).filter(e=>e&&isoOk(e.date)).map(e=>({id:String(e.id||uid()), date:e.date, goalId:String(e.goalId), acctId:String(e.acctId), amount:r2(num(e.amount)), note:String(e.note||'')}));
   o.stmtChecks = {}; Object.entries((s&&s.stmtChecks)||{}).forEach(([k,v]) => { if(/^.+\|\d{4}-\d{2}-\d{2}$/.test(k) && num(v)>0) o.stmtChecks[k]=r2(num(v)); });
   delete o.bills;
@@ -598,11 +609,51 @@ function cleanSplit(sp){
   if(!sp || !Array.isArray(sp.people) || !sp.people.length) return null;
   return { n: sp.n==='custom' ? 'custom' : Math.max(2, Math.round(num(sp.n)) || 2),
     people: sp.people.filter(Boolean).map(x => ({ id:String(x.id||uid()), name:String(x.name||'').trim(), amount:r2(Math.max(0, num(x.amount))),
-      status: ['owed','paid','nopay'].includes(x.status) ? x.status : 'owed', date: isoOk(x.date) ? x.date : null })) };
+      status: ['owed','paid','nopay'].includes(x.status) ? x.status : 'owed', date: isoOk(x.date) ? x.date : null, to: String(x.to||'') })) };
 }
 const othersOf = e => e.split ? r2(e.split.people.filter(x=>x.status!=='nopay').reduce((t,x)=>t+x.amount, 0)) : 0;
 const ownRatio = e => e.split && e.amount > 0 ? Math.max(0, Math.min(1, (e.amount - othersOf(e)) / e.amount)) : 1;
 const ownShare = e => r2(e.amount * ownRatio(e));
+
+// ---------- account balances (e.g. Maya) ----------
+const tracked = () => state.accounts.filter(a=>a.track);
+// which account holds your Savings money (Maya if you track it)
+function savAcctId(){ const t = tracked(); if(t.some(a=>a.id===S().savAcct)) return S().savAcct; return ((t.find(a=>/maya/i.test(a.name))||t[0])||{}).id || ''; }
+function acctBalance(a){
+  let b = num(a.adj);
+  for(const e of state.acctLog) if(e.acct===a.id) b += e.amount;
+  for(const e of state.expenses) if(e.method==='acct:'+a.id) b -= e.amount;
+  for(const p of state.cardPays) if(p.acct===a.id || (p.fromSavings && !p.acct && savAcctId()===a.id)) b -= p.amount;
+  for(const e of state.expenses) if(e.split) for(const q of e.split.people) if(q.status==='paid' && q.to===a.id) b += q.amount;
+  return r2(b);
+}
+// money in an account that's already spoken for: what you owe on cards you pay from it
+const waitingFor = a => r2(state.cards.filter(c=>c.payFrom===a.id).reduce((t,c)=>t+Math.max(0, cardOwed(c)), 0));
+function acctActivity(a){
+  const ev = [];
+  for(const e of state.acctLog) if(e.acct===a.id) ev.push({date:e.date, label:esc(e.note || (e.amount>=0 ? 'Money in' : 'Money out')), kind:e.amount>=0?'money in':'money out', amt:e.amount, del:e.id});
+  for(const e of state.expenses) if(e.method==='acct:'+a.id) ev.push({date:e.date, label:esc(e.desc)||'(no description)', kind:'expense', amt:-e.amount});
+  for(const p of state.cardPays) if(p.acct===a.id || (p.fromSavings && !p.acct && savAcctId()===a.id)) ev.push({date:p.date, label:esc((cardById(p.cardId)||{name:'Card'}).name)+' bill', kind:'card payment', amt:-p.amount});
+  for(const e of state.expenses) if(e.split) for(const q of e.split.people) if(q.status==='paid' && q.to===a.id) ev.push({date:q.date||e.date, label:`${esc(q.name)||'Someone'} paid back`, kind:esc(e.desc)||'split', amt:q.amount});
+  return ev.sort((x,y)=>y.date.localeCompare(x.date));
+}
+
+// ---------- payday carry-over (Non-essentials) ----------
+// What you didn't spend from one payday's non-essential budget carries into the next; an overspend carries too.
+// Moving a leftover to Savings takes it out of the carry-over.
+const movedCarry = p => r2(state.savings.log.filter(e=>e.ref==='carry:'+p).reduce((t,e)=>t+e.amount,0));
+function payCarryIn(p){
+  const ds = Object.keys(state.paydays).filter(d=>incomeOf(d)>0).sort(); if(!ds.length) return 0;
+  let q = payFor(ds[0]); if(p <= q) return 0;
+  let carry = 0, guard = 0;
+  while(q < p && guard++ < 500){
+    let out = r2(caps(q).want + carry - movedCarry(q) - (spentIn(q).want||0));
+    if(out < 0 && !(incomeOf(q) > 0)) out = 0;      // a payday without its pay entered doesn't pass on a shortfall
+    carry = out; q = nextPay(q);
+  }
+  return carry;
+}
+function wantAvail(p){ const base = caps(p).want, carry = payCarryIn(p), moved = movedCarry(p); return {base, carry, moved, avail:r2(base + carry - moved)}; }
 
 function recalcOf(s){
   s.savings.balance = r2(num(s.savings.adj) + s.savings.log.reduce((t,e)=>t+e.amount,0));
@@ -691,7 +742,7 @@ function spentIn(p){
 // what a setting-aside part has been filled with during a payday: from Savings, a goal, or both
 function savedIn(p, fill='all'){
   let t = 0;
-  if(fill==='all' || fill==='savings') for(const e of state.savings.log) if(e.amount>0 && !e.opening && inPay(e.date,p)) t += e.amount;
+  if(fill==='all' || fill==='savings') for(const e of state.savings.log) if(e.amount>0 && !e.opening && !String(e.ref||'').startsWith('carry:') && inPay(e.date,p)) t += e.amount;
   if(fill==='all' || fill.startsWith('goal:')) for(const e of state.goalLog) if(e.amount>0 && inPay(e.date,p) && (fill==='all' || 'goal:'+e.goalId===fill)) t += e.amount;
   return r2(t);
 }
@@ -762,12 +813,22 @@ function renderHome(){
   const bucket = (name, cls, cap, used, verb, extra='', color='') => `<div class="bucket"><div class="bh"><b>${name}</b><span>${fmt(cap)}</span></div>
     <div class="meter"><div class="fill ${cls!=='save' && used>cap ? 'over' : cls}" style="width:${pct(used,cap)}%;${color && !(cls!=='save' && used>cap) ? 'background:'+color : ''}"></div></div>
     <div class="bv"><span>${verb} ${fmt(used)}</span><span class="${cls!=='save' && cap-used<0 ? 'neg':'pos'}">${cls==='save' ? (used>=cap && cap>0 ? '✓ done' : fmt(Math.max(0,cap-used))+' to go') : (cap-used<0 ? fmt(used-cap)+' over' : fmt(cap-used)+' left')}</span></div>${extra}</div>`;
-  const wantLeft = r2(c.want - s.want);
+  const wa = wantAvail(p), wantLeft = r2(wa.avail - (s.want||0));
+  const bline = (l, v, cls='') => `<div class="bl ${cls}"><span>${l}</span><span class="mono">${v}</span></div>`;
+  const prevP = prevPay(p);
+  const carryBox = (wa.carry !== 0 || wa.moved > 0) ? `<div class="breakdown carrybox">
+      ${bline(`From ${shortWords(p)} salary`, fmt(wa.base))}
+      ${wa.moved > 0 ? `<div class="bl dim"><span>${fmt(wa.moved)} moved to savings ✓</span><button class="linkbtn" data-carryundo="${esc(p)}">Undo</button></div>` : ''}
+      ${r2(wa.carry - wa.moved) > 0 ? bline('Carried over from last payday', '+'+fmt(r2(wa.carry - wa.moved)), 'carry') : ''}
+      ${wa.carry < 0 ? bline('Overspent last payday', '−'+fmt(-wa.carry), 'carry neg') : ''}
+      ${wa.carry !== wa.moved ? bline('<b>Available</b>', `<b>${fmt(wa.avail)}</b>`, 'total') : ''}
+    </div>
+    ${r2(wa.carry - wa.moved) > 0 ? `<button class="linkbtn" data-carrymove="${esc(p)}" style="margin-top:6px;">Move ${fmt0(r2(wa.carry - wa.moved))} to savings instead</button>` : ''}` : '';
   setLive('meters', `<h2 style="margin-bottom:4px;">How this payday is going</h2>
     ${incomeOf(p)>0 ? '' : '<p class="hint">Enter your take-home pay above to see the bars fill.</p>'}
     ${P.map(x => x.kind==='spend'
-        ? bucket(esc(x.name), x.id==='need'?'need':x.id==='want'?'want':'spend', c[x.id], s[x.id]||0, 'Spent',
-            x.id==='want' && isCur && wantLeft>0 ? `<div class="daily">About <b>${fmt(wantLeft/daysLeft)}</b> a day for ${daysLeft} more day${daysLeft>1?'s':''}.</div>` : '', x.color)
+        ? bucket(esc(x.name), x.id==='need'?'need':x.id==='want'?'want':'spend', x.id==='want' ? wa.avail : c[x.id], s[x.id]||0, 'Spent',
+            x.id==='want' ? carryBox + (isCur && wantLeft>0 ? `<div class="daily">About <b>${fmt(wantLeft/daysLeft)}</b> a day for ${daysLeft} more day${daysLeft>1?'s':''}.</div>` : '') : '', x.color)
         : bucket(esc(x.name), 'save', c[x.id], savedIn(p, x.fill), 'Put away', '', x.color)).join('')}
     ${P.some(x=>x.kind==='save') ? `<p class="hint">"Put away" counts what you added to ${P.filter(x=>x.kind==='save').map(x=>x.fill==='all'?'Savings and your goals':x.fill==='savings'?'Savings':((state.goals.find(g=>'goal:'+g.id===x.fill)||{}).name||'a goal')).filter((v,i,a)=>a.indexOf(v)===i).join(', ')} during this payday.</p>` : ''}
     ${owedSection()}`);
@@ -896,11 +957,12 @@ function renderList(){
   for(const e of state.expenses) if(e.months>0 && payFor(e.date)===p && !seen.has(e.id)){ seen.add(e.id); put(e); }
   const pays = state.cardPays.filter(cp => { const cd=cardById(cp.cardId); return cd && cd.payNeed && inPay(cp.date,p); });
   const section = (cat, name, cls, color) => {
-    const cap = c[cat]||0, used = s[cat]||0, list = items[cat].sort((a,b)=>b.date.localeCompare(a.date));
+    const wa = cat==='want' ? wantAvail(p) : null, cap = wa ? wa.avail : (c[cat]||0), used = s[cat]||0, list = items[cat].sort((a,b)=>b.date.localeCompare(a.date));
+    const carryNote = wa && r2(wa.carry - wa.moved) !== 0 ? `<span class="dim">incl. ${r2(wa.carry-wa.moved)>0?'':'−'}${fmt0(Math.abs(r2(wa.carry-wa.moved)))} from last payday</span>` : '<span></span>';
     const extra = cat==='need' ? pays.map(cp => `<div class="row"><div class="what"><b>${esc(cardById(cp.cardId).name)} card payment</b><small>${words(cp.date)}</small><div><span class="tag cc">card payment</span></div></div><div class="amt">${fmt(cp.amount)}</div></div>`).join('') : '';
     return `<div class="section ${cls}" style="border-top-color:${color}"><div class="sh"><b>${esc(name)}</b><span class="mono" style="font-size:.82rem;">${fmt(used)} of ${fmt(cap)}</span></div>
       <div class="meter"><div class="fill ${used>cap?'over':cls}" style="width:${pct(used,cap)}%;${used>cap?'':'background:'+color}"></div></div>
-      <div class="bv mono" style="display:flex;justify-content:flex-end;font-size:.78rem;margin-top:4px;"><span class="${cap-used<0?'bad':'ok'}" style="font-weight:600;">${cap-used<0?fmt(used-cap)+' over':fmt(cap-used)+' left'}</span></div>
+      <div class="bv mono" style="display:flex;justify-content:space-between;gap:8px;font-size:.78rem;margin-top:4px;">${carryNote}<span class="${cap-used<0?'bad':'ok'}" style="font-weight:600;">${cap-used<0?fmt(used-cap)+' over':fmt(cap-used)+' left'}</span></div>
       ${list.length || extra ? list.map(e=>expRow(e,p)).join('') + extra : '<div class="empty">Nothing logged.</div>'}</div>`;
   };
   setLive('expList', spendParts().map(x => section(x.id, x.name, x.id==='need'?'need':x.id==='want'?'want':'spend', x.color)).join('<div style="height:12px"></div>'));
@@ -1039,6 +1101,7 @@ function renderCards(){
         <label class="f">Card name<input type="text" data-cname="${esc(c.id)}" value="${esc(c.name)}"></label>
         <div class="row2" style="margin-top:8px;"><label class="f">Statement closes on day<input type="number" inputmode="numeric" data-cclose="${esc(c.id)}" value="${c.close}"></label>
           <label class="f">Days until payment due<input type="number" inputmode="numeric" data-cdue="${esc(c.id)}" value="${c.due}"></label></div>
+        ${tracked().length ? `<label class="f" style="margin-top:10px;">Usually paid from<select data-cpayfrom="${esc(c.id)}"><option value="">Somewhere else</option>${tracked().map(a=>`<option value="${esc(a.id)}" ${c.payFrom===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select></label>` : ''}
         <span class="lbl" style="margin-top:10px;">Color</span>${swatches('cardcolor', c.id, colorOf(c))}
         <label class="check-line"><input type="checkbox" data-cneed="${esc(c.id)}" ${c.payNeed?'checked':''}> Payments count as an Essential (for paying off an old balance)</label>
         <div class="inline" style="margin-top:10px;"><button class="btn green" style="flex:1;" data-carddone="${esc(c.id)}">Done</button><button class="btn out" data-cdel="${esc(c.id)}">Remove card</button></div></div>` : '';
@@ -1046,12 +1109,13 @@ function renderCards(){
       <div class="cardhead"><h2><span class="cdot" style="background:${colorOf(c)}"></span>${esc(c.name)}</h2><button class="linkbtn" data-cardedit="${esc(c.id)}">${editingCard===c.id?'Close':'Edit'}</button></div>
       ${edit}
       <div class="periods">${show('paying', last, ps.done)}${show('now', cur, false)}${show('next', next, true)}</div>
-      <details class="more" ${owe>0 && c.payNeed ? 'open' : ''}><summary>Total owed ${fmt(owe)} · Pay</summary>
+      <details class="more" data-paybox="${esc(c.id)}" ${payOpen.has(c.id) || (owe>0 && c.payNeed && !payClosed.has(c.id)) ? 'open' : ''}><summary>Total owed ${fmt(owe)} · Pay</summary>
         <div class="row2" style="margin-top:6px;"><label class="f">Amount (₱)<input type="number" inputmode="decimal" step="0.01" data-cpamt="${esc(c.id)}" placeholder="0.00"></label>
           <div style="display:flex;align-items:flex-end;"><button class="btn green block" data-cpsave="${esc(c.id)}">Pay</button></div></div>
-        <label class="check-line"><input type="checkbox" data-cpsav="${esc(c.id)}" ${c.payNeed?'':'checked'}> Paid from my savings</label>
+        <span class="lbl" style="margin-top:8px;">Paid from</span>
+        <div class="chips" style="flex-wrap:wrap;">${payFromOpts().map(([v,l,col]) => `<button data-cpfrom="${esc(c.id)}|${esc(v)}" class="mchip ${payFromSel(c)===v?'on':''}" style="${col?`--mc:${col};--mon:${onColor(col)}`:''}">${col?'<span class="dot"></span>':''}${esc(l)}</button>`).join('')}</div>
         <p class="hint" style="margin-top:4px;">${c.payNeed ? 'Payments on this card count as an Essential in your budget.' : 'Payments here don\'t count in your budget, because the purchases already did.'}</p>
-        ${pays.length ? '<div class="log" style="margin-top:6px;">' + pays.map(p=>`<div class="row"><div class="what"><b>${fmt(p.amount)}</b><small>${words(p.date)}${p.fromSavings?' · from savings':''}</small></div><button class="iconbtn" data-cpdel="${esc(p.id)}" aria-label="Remove payment">✕</button></div>`).join('') + '</div>' : ''}
+        ${pays.length ? '<div class="log" style="margin-top:6px;">' + pays.map(p=>`<div class="row"><div class="what"><b>${fmt(p.amount)}</b><small>${words(p.date)}${p.fromSavings?' · from savings':p.acct?' · from '+esc((state.accounts.find(a=>a.id===p.acct)||{name:'an account'}).name):''}</small></div><button class="iconbtn" data-cpdel="${esc(p.id)}" aria-label="Remove payment">✕</button></div>`).join('') + '</div>' : ''}
         <label class="lbl" style="margin-top:12px;">Correct what you owe to match the bank (₱)</label>
         <div class="inline"><input type="number" inputmode="decimal" step="0.01" data-cpfix="${esc(c.id)}" placeholder="${owe}"><button class="btn small" data-cpfixsave="${esc(c.id)}">Set</button></div>
       </details>
@@ -1059,9 +1123,37 @@ function renderCards(){
 }
 
 // ----- savings + goals -----
+function renderAcctCards(){
+  setLive('acctLive', tracked().map(a => {
+    if(!a.balSet) return `<div class="card acctcard"><h2><span class="cdot" style="background:${a.color}"></span>In ${esc(a.name)}</h2>
+      <p class="hint">Enter ${esc(a.name)}'s balance right now (from the ${esc(a.name)} app) to start tracking it.</p>
+      <div class="inline"><input type="number" inputmode="decimal" step="0.01" data-amfix="${esc(a.id)}" placeholder="0.00"><button class="btn green small" data-amfixsave="${esc(a.id)}">Start</button></div></div>`;
+    const bal = acctBalance(a), sv = savAcctId()===a.id ? Math.max(0, state.savings.balance) : 0, wait = waitingFor(a), free = r2(bal - sv - wait);
+    const seg = (v, col) => v > 0 && bal > 0 ? `<i style="width:${Math.min(100, v/Math.max(bal, sv+wait+Math.max(0,free))*100)}%;background:${col}"></i>` : '';
+    const ev = acctActivity(a).slice(0, 8);
+    return `<div class="card acctcard"><h2><span class="cdot" style="background:${a.color}"></span>In ${esc(a.name)}</h2>
+      <div class="bigmoney" style="${bal<0?'color:var(--red)':''}">${fmt(bal)}</div>
+      <div class="acctbar">${seg(sv,'var(--green)')}${seg(wait,'#F47920')}${seg(free,'var(--slate)')}</div>
+      ${sv>0 || savAcctId()===a.id ? `<div class="bl"><span><span class="mdot" style="background:var(--green)"></span>Savings</span><span class="mono">${fmt(sv)}</span></div>` : ''}
+      <div class="bl"><span><span class="mdot" style="background:#F47920"></span>Waiting for card bills</span><span class="mono">${fmt(wait)}</span></div>
+      <div class="bl ${free<0?'bad':''}"><span><span class="mdot" style="background:var(--slate)"></span>${free<0 ? 'Short by' : 'Free to use'}</span><span class="mono">${fmt(Math.abs(free))}</span></div>
+      ${free<0 ? `<p class="hint bad" style="margin-top:4px;">${esc(a.name)} doesn't hold enough for your savings plus card bills.</p>` : ''}
+      ${!state.cards.some(c=>c.payFrom===a.id) && state.cards.length ? `<p class="hint">"Waiting for card bills" fills in once you pay a card from ${esc(a.name)} (or choose it in a card's Edit).</p>` : ''}
+      <div class="row2" style="margin-top:10px;"><label class="f">Amount (₱)<input type="number" inputmode="decimal" step="0.01" data-amamt="${esc(a.id)}" placeholder="0.00"></label>
+        <label class="f">What for? (optional)<input type="text" data-amnote="${esc(a.id)}" placeholder="e.g. Payday transfer" autocomplete="off"></label></div>
+      <div class="inline" style="margin-top:8px;"><button class="btn green" style="flex:1;" data-amin="${esc(a.id)}">+ Money in</button><button class="btn out" style="flex:1;" data-amout="${esc(a.id)}">− Money out</button></div>
+      <p class="hint" style="margin-top:6px;">Expenses paid with ${esc(a.name)} and card bills paid from it come out automatically.</p>
+      <details class="more"><summary>Correct balance</summary>
+        <div class="inline" style="margin-top:6px;"><input type="number" inputmode="decimal" step="0.01" data-amfix="${esc(a.id)}" placeholder="${bal}"><button class="btn small" data-amfixsave="${esc(a.id)}">Set</button></div></details>
+      ${ev.length ? `<span class="lbl" style="margin-top:8px;">Recent in ${esc(a.name)}</span>` + ev.map(x => `<div class="row"><div class="what"><b>${x.label}</b><small>${words(x.date)} · ${x.kind}</small></div>
+        <span class="${x.amt>=0?'plus':'minus'}">${x.amt>=0?'+':'−'}${fmt(Math.abs(x.amt))}</span>${x.del ? `<button class="iconbtn" data-amdel="${esc(x.del)}" aria-label="Remove">✕</button>` : ''}</div>`).join('') : ''}
+    </div>`; }).join(''));
+}
 function renderSavings(){
+  renderAcctCards();
   const sv = state.savings;
-  setLive('savLive', `<h2>Savings</h2><div class="bigmoney" style="${sv.balance<0?'color:var(--red)':''}">${fmt(sv.balance)}<small>saved right now</small></div>`);
+  setLive('savLive', `<h2>Savings</h2><div class="bigmoney" style="${sv.balance<0?'color:var(--red)':''}">${fmt(sv.balance)}<small>saved right now</small></div>
+    ${tracked().length ? `<label class="f" style="margin-top:4px;">Kept in<select data-savacct="1">${tracked().map(a=>`<option value="${esc(a.id)}" ${savAcctId()===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select></label>` : ''}`);
   const recent = sv.log.map((e,i)=>({e,i})).sort((x,y)=>y.e.date.localeCompare(x.e.date)||y.i-x.i).slice(0,6).map(x=>x.e);
   setLive('savLog', recent.length ? '<span class="lbl" style="margin-top:8px;">Recent</span>' + recent.map(e=>`<div class="row"><div class="what"><b>${esc(e.note||(e.amount>=0?'Added':'Taken out'))}</b><small>${words(e.date)}</small></div>
     <span class="${e.amount>=0?'plus':'minus'}">${e.amount>=0?'+':'−'}${fmt(Math.abs(e.amount))}</span><button class="iconbtn" data-savdel="${esc(e.id)}" aria-label="Remove">✕</button></div>`).join('') : '');
@@ -1098,10 +1190,27 @@ function renderGoals(){
 // ----- more: settings, cards, bills -----
 const swatches = (kind, id, cur) => `<div class="swatches">${PALETTE.concat(PALETTE.includes(cur)?[]:[cur]).map(col =>
   `<button data-${kind}="${esc(id)}|${col}" class="${col===cur?'on':''}" style="background:${col}" aria-label="Color ${col}"></button>`).join('')}</div>`;
+// where a card payment comes from: a tracked account, your Savings, or somewhere else
+const payFromChoice = {}, payOpen = new Set(), payClosed = new Set();
+// remember which cards' payment sections you've opened, so choosing "Paid from" doesn't fold them shut
+document.addEventListener('toggle', e => { const id = e.target && e.target.dataset && e.target.dataset.paybox; if(!id) return;
+  if(e.target.open){ payOpen.add(id); payClosed.delete(id); } else { payOpen.delete(id); payClosed.add(id); } }, true);
+const payFromOpts = () => [...tracked().map(a=>[a.id, a.name, a.color]), ['savings','Savings',''], ['other','Somewhere else','']];
+function payFromSel(c){ const v = payFromChoice[c.id] ?? (c.payFrom || (c.payNeed ? 'other' : (tracked().length ? (savAcctId()||'savings') : 'savings')));
+  return payFromOpts().some(o=>o[0]===v) ? v : 'other'; }
+function addCardPayment(c, amt){
+  const from = payFromSel(c), cp = {id:uid(), cardId:c.id, date:today(), amount:amt, fromSavings: from==='savings', acct: tracked().some(a=>a.id===from) ? from : '', note:''};
+  state.cardPays.push(cp);
+  if(cp.fromSavings) savEntry(-amt, `${c.name} card payment`, {ref:cp.id});
+  if(cp.acct) c.payFrom = cp.acct;
+  const where = cp.fromSavings ? ', taken from savings' : cp.acct ? `, from ${(state.accounts.find(a=>a.id===cp.acct)||{}).name}` : '';
+  return where;
+}
 function renderAccounts(){
   setLive('acctEdit', `<div class="pmrow"><b><span class="cdot" style="background:${CASH_COLOR}"></span>Cash</b> <span class="hint" style="margin:0;">always available</span></div>`
     + state.accounts.map(a => `<div class="pmrow"><div class="inline"><span class="cdot" style="background:${colorOf(a)};margin:0;"></span>
         <input type="text" data-pmname="${esc(a.id)}" value="${esc(a.name)}" aria-label="Name"><button class="iconbtn" data-pmdel="${esc(a.id)}" aria-label="Remove">✕</button></div>
+        <label class="check-line" style="margin-top:6px;"><input type="checkbox" data-pmtrack="${esc(a.id)}" ${a.track?'checked':''}> Track balance${a.track && a.balSet ? ` · <span class="mono">${fmt(acctBalance(a))}</span>` : ''}</label>
         ${swatches('pmcolor', a.id, colorOf(a))}</div>`).join(''));
 }
 function fillOptions(x){
@@ -1234,7 +1343,11 @@ document.addEventListener('input', e => {
   else if(d.aamt){ const [gi,ai]=d.aamt.split(':'), x=g(gi), a=x&&x.accounts.find(z=>z.id===ai); if(a){ a.adj = r2(num(t.value) - state.goalLog.filter(e=>e.goalId===x.id && e.acctId===a.id).reduce((s2,e)=>s2+e.amount,0)); save(); } }
 });
 document.addEventListener('change', e => { const t=e.target, d=t.dataset||{};
-  if(d.ptfrom){ const x=partById(d.ptfrom); if(x){ x.from = t.value; save(); renderHome(); renderList(); renderCards(); } }
+  if(d.pmtrack){ const a = state.accounts.find(x=>x.id===d.pmtrack); if(a){ a.track = t.checked; save(); renderAll();
+      if(a.track && !a.balSet) toast(`Now enter ${a.name}'s current balance on the Savings tab.`); } }
+  else if(d.savacct){ S().savAcct = t.value; save(); refresh(); }
+  else if(d.cpayfrom){ const cd = cardById(d.cpayfrom); if(cd){ cd.payFrom = t.value; delete payFromChoice[cd.id]; save(); refresh(); } }
+  else if(d.ptfrom){ const x=partById(d.ptfrom); if(x){ x.from = t.value; save(); renderHome(); renderList(); renderCards(); } }
   else if(d.ptfill){ const x=partById(d.ptfill); if(x){ x.fill = t.value; save(); renderHome(); } }
   else if(d.cneed){ const c=cardById(d.cneed); if(c){ c.payNeed=t.checked; save(); refresh(); } }
   // while a card is being edited, leave its box alone so tapping the next field doesn't lose focus; Done redraws it
@@ -1243,11 +1356,24 @@ document.addEventListener('change', e => { const t=e.target, d=t.dataset||{};
 });
 
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-splitview],[data-ptmode],[data-splitn],[data-spdel],[data-owepaid],[data-owenopay],[data-oweundo],[data-ptkind],[data-ptdel],[data-pmcolor],[data-cardcolor],[data-pmdel],[data-paytype],[data-tab],[data-pay-nav],[data-cat],[data-method],[data-edit],[data-del],[data-paycard],[data-payrest],[data-expand],[data-collapse],[data-cardedit],[data-carddone],[data-cpsave],[data-cpdel],[data-cpfixsave],[data-savdel],[data-gacct],[data-gadd],[data-gout],[data-gldel],[data-goaledit],[data-goaldone],[data-aadd],[data-adel],[data-gdel],[data-cdel],[data-action],[data-theme-set]');
+  const el = e.target.closest('[data-cpfrom],[data-carrymove],[data-carryundo],[data-amin],[data-amout],[data-amdel],[data-amfixsave],[data-splitview],[data-ptmode],[data-splitn],[data-spdel],[data-owepaid],[data-owenopay],[data-oweundo],[data-ptkind],[data-ptdel],[data-pmcolor],[data-cardcolor],[data-pmdel],[data-paytype],[data-tab],[data-pay-nav],[data-cat],[data-method],[data-edit],[data-del],[data-paycard],[data-payrest],[data-expand],[data-collapse],[data-cardedit],[data-carddone],[data-cpsave],[data-cpdel],[data-cpfixsave],[data-savdel],[data-gacct],[data-gadd],[data-gout],[data-gldel],[data-goaledit],[data-goaldone],[data-aadd],[data-adel],[data-gdel],[data-cdel],[data-action],[data-theme-set]');
   if(!el) return; const d = el.dataset;
   if(d.tab){ showTab(d.tab); return; }
   if(d.payNav){ const k=Number(d.payNav); const np = k>0 ? nextPay(viewPay) : prevPay(viewPay); if(k>0 && viewPay>=nextPay(curPay())) return; viewPay=np; renderPeriod(); renderHome(); renderList(); return; }
   if(d.themeSet){ setTheme(d.themeSet); return; }
+  if(d.cpfrom){ const [cid, v] = d.cpfrom.split('|'); payFromChoice[cid] = v; renderCards(); return; }
+  if(d.carrymove){ const p = d.carrymove, wa = wantAvail(p), amt = r2(wa.carry - wa.moved); if(!(amt>0)) return;
+    savEntry(amt, `Leftover from ${shortWords(prevPay(p))} payday`, {ref:'carry:'+p}); save(); refresh(); toast(`${fmt(amt)} moved to savings.`); return; }
+  if(d.carryundo){ const ids = state.savings.log.filter(e=>e.ref==='carry:'+d.carryundo).map(e=>e.id); ids.forEach(removeSav); save(); refresh(); toast('Moved back to this payday.'); return; }
+  if(d.amin || d.amout){ const id = d.amin || d.amout, a = state.accounts.find(x=>x.id===id); if(!a) return;
+    const box = document.querySelector(`[data-amamt="${id}"]`), note = document.querySelector(`[data-amnote="${id}"]`), amt = r2(num(box.value));
+    if(!(amt>0)){ toast('Enter an amount.'); return; }
+    const e = {id:uid(), date:today(), acct:id, amount: d.amin ? amt : -amt, note: note.value.trim()}; state.acctLog.push(e); box.value=''; note.value='';
+    save(); refresh(); toast(`${d.amin?'+':'−'}${fmt(amt)} ${d.amin?'into':'out of'} ${a.name}.`, 'Undo', ()=>{ state.acctLog = state.acctLog.filter(x=>x.id!==e.id); save(); refresh(); }); return; }
+  if(d.amdel){ const e = state.acctLog.find(x=>x.id===d.amdel); if(!e) return; state.acctLog = state.acctLog.filter(x=>x.id!==e.id); save(); refresh();
+    toast('Entry removed', 'Undo', ()=>{ state.acctLog.push(e); save(); refresh(); }); return; }
+  if(d.amfixsave){ const a = state.accounts.find(x=>x.id===d.amfixsave), box = document.querySelector(`[data-amfix="${d.amfixsave}"]`); if(!a || box.value.trim()==='') return;
+    const target = r2(num(box.value)); a.adj = r2(num(a.adj) + (target - acctBalance(a))); a.balSet = true; save(); refresh(); toast(`${a.name}: ${fmt(target)}.`); return; }
   if(d.splitview){ splitOpen.has(d.splitview) ? splitOpen.delete(d.splitview) : splitOpen.add(d.splitview); renderList(); return; }
   if(d.ptmode){ const [id, mode] = d.ptmode.split('|'), x = partById(id); if(!x || x.mode===mode) return;
     x.mode = mode; if(mode==='fixed' && !parts().some(y=>y.id===x.from && y.mode!=='fixed')) x.from = 'need';
@@ -1279,7 +1405,10 @@ document.addEventListener('click', async e => {
   if(d.owepaid || d.owenopay || d.oweundo){ const [eid, pid] = (d.owepaid||d.owenopay||d.oweundo).split('|'), x = state.expenses.find(z=>z.id===eid), who = x && x.split && x.split.people.find(q=>q.id===pid);
     if(!who) return;
     if(d.owenopay && await ask(`Mark ${who.name || 'this person'}'s ${fmt(who.amount)} as not paying you back? It will count as your own spending.`, [{label:'Not paying', cls:'danger'},{label:'Cancel', cls:'ghost'}])!==0) return;
-    who.status = d.owepaid ? 'paid' : d.owenopay ? 'nopay' : 'owed'; who.date = d.oweundo ? null : today();
+    let to = '';
+    if(d.owepaid && tracked().length){ const T = tracked(), i = await ask(`Where did ${who.name || 'they'} pay you back?`, [...T.map(a=>({label:a.name, cls:'green'})), {label:'Somewhere else', cls:'ghost'}, {label:'Cancel', cls:'ghost'}]);
+      if(i === T.length+1) return; to = i < T.length ? T[i].id : ''; }
+    who.status = d.owepaid ? 'paid' : d.owenopay ? 'nopay' : 'owed'; who.date = d.oweundo ? null : today(); who.to = d.owepaid ? to : '';
     save(); refresh(); return; }
   if(d.paytype){ const wasCur = viewPay === curPay(); S().payType = d.paytype; viewPay = wasCur ? curPay() : payFor(viewPay); save(); renderAll(); return; }
   if(d.cat){ formCat=d.cat; refreshForm(); return; }
@@ -1307,23 +1436,18 @@ document.addEventListener('click', async e => {
   if(d.carddone){ editingCard = null; refresh(); return; }
   if(d.payrest){ const [cid, cl] = d.payrest.split('|'), c = cardById(cid); if(!c) return;
     const rest = r2(cycleStats(c,cl).total - paidSince(c,cl)); if(!(rest>0)) return;
-    const box = document.querySelector(`[data-cpsav="${cid}"]`), fromSav = box ? box.checked : !c.payNeed;
-    const cp = {id:uid(), cardId:c.id, date:today(), amount:rest, fromSavings:fromSav, note:''}; state.cardPays.push(cp);
-    if(fromSav) savEntry(-rest, `${c.name} card payment`, {ref:cp.id});
-    save(); refresh(); toast(`${fmt(rest)} paid to ${c.name}${fromSav?', taken from savings':''}.`); return; }
+    const where = addCardPayment(c, rest); save(); refresh(); toast(`${fmt(rest)} paid to ${c.name}${where}.`); return; }
   if(d.paycard){ showTab('cards'); return; }
-  if(d.cpsave){ const c=cardById(d.cpsave); const box=document.querySelector(`[data-cpamt="${d.cpsave}"]`), fromSav=document.querySelector(`[data-cpsav="${d.cpsave}"]`).checked;
+  if(d.cpsave){ const c=cardById(d.cpsave); const box=document.querySelector(`[data-cpamt="${d.cpsave}"]`);
     const amt=r2(num(box.value)); if(!(amt>0)){ toast('Enter the amount you paid.'); return; }
-    const cp={id:uid(), cardId:c.id, date:today(), amount:amt, fromSavings:fromSav, note:''}; state.cardPays.push(cp);
-    if(fromSav) savEntry(-amt, `${c.name} card payment`, {ref:cp.id});
-    box.value=''; save(); refresh(); toast(`${fmt(amt)} paid to ${c.name}${fromSav?', taken from savings':''}.`); return; }
+    const where = addCardPayment(c, amt); box.value=''; save(); refresh(); toast(`${fmt(amt)} paid to ${c.name}${where}.`); return; }
   if(d.cpdel){ const i=state.cardPays.findIndex(p=>p.id===d.cpdel); if(i<0) return; const cp=state.cardPays.splice(i,1)[0];
     const linked=state.savings.log.find(x=>x.ref===cp.id); let back=null; if(linked) back=removeSav(linked.id);
     save(); refresh(); toast('Payment removed','Undo',()=>{ state.cardPays.splice(i,0,cp); if(back){ state.savings.log.push(back); state.savings.balance=r2(state.savings.balance+back.amount); } save(); refresh(); }); return; }
   if(d.cpfixsave){ const c=cardById(d.cpfixsave), box=document.querySelector(`[data-cpfix="${d.cpfixsave}"]`); if(!c||box.value.trim()==='') return;
     const target=r2(num(box.value)); c.start = r2(c.start + (target - cardOwed(c))); save(); refresh(); toast(`${c.name}: you owe ${fmt(target)}.`); return; }
   if(d.savdel){ const ent=state.savings.log.find(x=>x.id===d.savdel); if(!ent) return;
-    if(ent.ref){ toast('This came from a card payment. Remove the payment on the Cards tab instead.'); return; }
+    if(ent.ref && !String(ent.ref).startsWith('carry:')){ toast('This came from a card payment. Remove the payment on the Cards tab instead.'); return; }
     removeSav(ent.id); save(); refresh(); toast('Entry removed','Undo',()=>{ state.savings.log.push(ent); state.savings.balance=r2(state.savings.balance+ent.amount); save(); refresh(); }); return; }
   if(d.gacct){ const [gi,ai]=d.gacct.split(':'); (goalForm[gi]=goalForm[gi]||{}).acct=ai; renderGoals(); return; }
   if(d.gadd || d.gout){ const gi=d.gadd||d.gout, sign=d.gadd?1:-1, g=state.goals.find(x=>x.id===gi); if(!g) return;
@@ -1367,7 +1491,8 @@ document.addEventListener('click', async e => {
     case 'syncOff': if(await ask('Turn off sync on this device? Your data stays here and on your other devices.', [{label:'Turn off', cls:'danger'},{label:'Cancel', cls:'ghost'}])===0){
         sync = null; try{ localStorage.removeItem(SYNC_KEY); }catch(_){} clearTimeout(syncTimer); setSyncStatus('off'); toast('Sync turned off on this device.'); } break;
     case 'clearAll': if(await ask('Clear all your entries? Settings, cards and goal names stay. This can\'t be undone.' + (sync ? ' Sync is on, so this also clears them on your other devices.' : ''), [{label:'Clear everything', cls:'danger'},{label:'Cancel', cls:'ghost'}])===0){
-        const keep = { settings: state.settings, cards: state.cards.map(x=>({...x, start:0})), goals: state.goals.map(g=>({...g, accounts:g.accounts.map(a=>({...a, amount:0}))})) };
+        const keep = { settings: state.settings, cards: state.cards.map(x=>({...x, start:0})), goals: state.goals.map(g=>({...g, accounts:g.accounts.map(a=>({...a, amount:0}))})),
+          accounts: state.accounts.map(a=>({...a, adj:0, balSet:false})) };
         state = normalize(keep); save(); viewPay=curPay(); formMethod=null; resetForm(); renderAll(); showTab('home'); toast('Cleared. Fresh start.'); } break;
     case 'showBackup': { const b=$('backupBox'); b.value=JSON.stringify(state); b.focus(); b.select(); break; }
     case 'copyBackup': { const b=$('backupBox'); b.value=JSON.stringify(state); b.focus(); b.select(); let ok=false;
@@ -1410,7 +1535,7 @@ setInterval(dayCheck, 60000);
 // secret gist on your GitHub. Each record carries the time it last changed; when devices differ, the newest
 // version of each record wins and deletions carry over.
 let API = 'https://api.github.com';
-const SCHEMA = 5;   // raise when the saved format changes, so an older copy of the app pauses syncing instead of mixing formats
+const SCHEMA = 6;   // raise when the saved format changes, so an older copy of the app pauses syncing instead of mixing formats
 const SYNC_KEY = 'financial:sync', GIST_DESC = 'Financial tracker sync (encrypted)', GIST_FILE = 'financial-sync.json';
 let sync = null; try{ sync = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null'); }catch(_){ sync = null; }
 let syncBusy = false, syncAgain = false, syncTimer = null, lastSyncAt = null, syncState = 'off', syncDetail = '', lastRec = null;
@@ -1427,16 +1552,17 @@ function recordsOf(s){
   for(const e of s.savings.log) r.set('sl:'+e.id, JSON.stringify(e));
   for(const g of s.goals) r.set('goal:'+g.id, JSON.stringify({id:g.id, name:g.name, target:g.target, accounts:g.accounts.map(a=>({id:a.id, name:a.name, adj:num(a.adj)}))}));
   for(const e of s.goalLog) r.set('gl:'+e.id, JSON.stringify(e));
+  for(const e of (s.acctLog||[])) r.set('alog:'+e.id, JSON.stringify(e));
   for(const k of Object.keys(s.stmtChecks).sort()) r.set('chk:'+k, JSON.stringify(s.stmtChecks[k]));
   return r;
 }
 function fromRecords(map, meta){
-  const s = {settings:{}, paydays:{}, cards:[], accounts:[], cardPays:[], expenses:[], savings:{adj:0, log:[]}, goals:[], goalLog:[], stmtChecks:{}, meta};
+  const s = {settings:{}, paydays:{}, cards:[], accounts:[], cardPays:[], expenses:[], savings:{adj:0, log:[]}, goals:[], goalLog:[], acctLog:[], stmtChecks:{}, meta};
   for(const [k, j] of map){ const v = JSON.parse(j), i = k.indexOf(':'), type = i<0 ? k : k.slice(0,i), id = i<0 ? '' : k.slice(i+1);
     if(type==='set') s.settings = v; else if(type==='sadj') s.savings.adj = v.adj; else if(type==='card') s.cards.push(v); else if(type==='acct') s.accounts.push(v);
     else if(type==='pay') s.paydays[id] = v; else if(type==='exp') s.expenses.push(v); else if(type==='cp') s.cardPays.push(v);
     else if(type==='sl') s.savings.log.push(v); else if(type==='goal') s.goals.push({...v, accounts:v.accounts.map(a=>({...a, amount:0}))});
-    else if(type==='gl') s.goalLog.push(v); else if(type==='chk') s.stmtChecks[id] = v; }
+    else if(type==='gl') s.goalLog.push(v); else if(type==='alog') s.acctLog.push(v); else if(type==='chk') s.stmtChecks[id] = v; }
   return normalize(s);
 }
 // mark what changed since the last save (and what was deleted), so the newest version wins when devices meet
